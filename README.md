@@ -1,170 +1,247 @@
-# Azki Reservation System
+# Reservation — High-Concurrency Appointment Scheduling Backend
 
-Enterprise-grade appointment reservation system built with Spring Boot.
+A production-oriented appointment reservation backend built with **Java 21** and **Spring Boot 3.5**. The project focuses on reliable reservation processing under contention, using PostgreSQL for durable state and Redis for queueing, caching, status tracking, and rate-limiting support.
 
-## Features
+## Highlights
 
-### Core Functionality
-- User authentication with secure JWT tokens
-- Queue-based reservation processing for high concurrency support
-- Automatic selection of nearest available time slot
-- Reservation status tracking and notifications
-- Reservation cancellation capability
+- JWT-based authentication and Spring Security
+- Queue-based reservation processing for high-concurrency workloads
+- Automatic selection of the nearest available time slot
+- Reservation lifecycle tracking and cancellation
+- Redis-backed request queue, status tracking, and caching
+- Optimistic locking for concurrent reservation updates
+- Retry handling and dead-letter processing for failed requests
+- Configurable API rate limiting with Bucket4j
+- Liquibase database migrations
+- Prometheus/Micrometer metrics and Spring Boot Actuator health endpoints
+- OpenAPI / Swagger documentation
 
-### Performance & Scalability
-- Redis-backed queue for high throughput reservation requests
-- O(1) lookup optimization for email tracking using Redis Sets
-- Caching of available time slots for improved performance
-- Automatic TTL for Redis keys to prevent memory growth
+## Tech Stack
 
-### Security
-- JWT-based authentication with configurable expiration
-- Input validation for all API endpoints
-- API rate limiting protection (configurable)
-- Comprehensive security logging and audit trails
+| Area | Technology |
+|---|---|
+| Language | Java 21 |
+| Framework | Spring Boot 3.5 |
+| Web | Spring MVC |
+| Security | Spring Security + JWT |
+| Persistence | Spring Data JPA |
+| Database | PostgreSQL |
+| Cache / Queue | Redis |
+| Migrations | Liquibase |
+| Resilience | Spring Retry |
+| Rate limiting | Bucket4j |
+| Observability | Micrometer, Prometheus, Spring Boot Actuator |
+| API documentation | Springdoc OpenAPI / Swagger UI |
+| Build | Maven |
 
-### Reliability
-- Dead letter queue (DLQ) for failed reservation requests
-- Optimistic locking for handling concurrent modifications
-- Automatic retry with backoff for transient failures
-- Configurable reservation expiration management
+## Architecture
 
-### Monitoring & Observability
-- Detailed metrics for performance monitoring (Micrometer + Prometheus)
-- Custom health indicators for system status monitoring
-- Enhanced logging with color formatting for easier debugging
-- Request tracing for all operations
+```text
+Client
+  |
+  v
+REST API
+  |
+  +--> Security / Rate Limiting
+  |
+  v
+Reservation Services
+  |
+  +--> PostgreSQL
+  |      Durable reservation state
+  |
+  +--> Redis
+         Queueing, caching, status tracking
+```
 
-### User Experience
-- Improved API response structures with detailed information
-- Consistent error messages with appropriate HTTP status codes
-- Automatic waitlist capability for high-demand slots
+The application uses a layered Spring architecture with controllers, services, repositories, security components, and infrastructure adapters around PostgreSQL and Redis.
+
+## Reservation Flow
+
+A reservation request is accepted through the API and can be processed asynchronously through the Redis-backed queue.
+
+```text
+Reservation request
+  -> authentication + validation
+  -> queue / processing
+  -> find nearest available slot
+  -> persist reservation
+  -> publish reservation status
+```
+
+Concurrency-sensitive updates use optimistic locking so conflicting writes can be detected instead of silently overwriting one another.
+
+## Reliability & Concurrency
+
+The project includes several mechanisms intended for production-style failure handling:
+
+- optimistic locking for concurrent modifications
+- automatic retry with backoff for transient failures
+- dead-letter handling for requests that cannot be processed successfully
+- reservation expiration management
+- Redis TTL policies to limit stale transient state
+- status tracking for asynchronous reservation processing
+
+## Security
+
+Security is implemented with Spring Security and JWT-based authentication.
+
+The API also includes:
+
+- request validation
+- configurable token expiration
+- configurable rate limiting
+- HTTP 429 responses when configured rate limits are exceeded
+- application logging suitable for operational and audit analysis
+
+## Observability
+
+The application exposes health and metrics through Spring Boot Actuator.
+
+```text
+GET /actuator/health
+GET /actuator/metrics
+```
+
+Prometheus integration is provided through Micrometer.
+
+Reservation-specific metrics documented by the project include:
+
+```text
+reservation.queue.length
+reservation.dlq.length
+reservation.queue.processed
+reservation.queue.errors.*
+```
+
+## API Documentation
+
+After starting the application, Swagger UI is available at:
+
+```text
+http://localhost:8080/swagger-ui/index.html
+```
 
 ## Requirements
-- Java 21+
-- Maven 3.8+
+
+- JDK 21+
+- Maven
 - PostgreSQL 14+
 - Redis 6+
 
 ## Configuration
-Key application properties (configurable in `application.yml`):
+
+Reservation behavior can be configured through `application.yml`.
 
 ```yaml
 reservation:
   queue:
-    batch-size: 50             # Number of requests processed per batch
-    poll-interval-ms: 10       # Polling interval in milliseconds
+    batch-size: 50
+    poll-interval-ms: 10
   status:
-    expiry-hours: 24           # How long to keep status keys in Redis
+    expiry-hours: 24
   rate-limiting:
-    enabled: true              # Enable/disable API rate limiting
+    enabled: true
   expiry:
-    hours: 24                  # Reservation expiration time
-    check-minutes: 15          # How often to check for expired reservations
+    hours: 24
+    check-minutes: 15
 ```
 
-## Setup
-1. Clone the repository:
-   ```sh
-   git clone <your-repo-url>
-   cd reservation
-   ```
+Adjust these values for the deployment environment and expected workload.
 
-2. Configure PostgreSQL and Redis:
-   ```sh
-   docker-compose up -d
-   ```
+## Getting Started
 
-3. Build the project:
-   ```sh
-   ./mvnw clean install
-   ```
+Clone the repository:
 
-4. Run the application:
-   ```sh
-   ./mvnw spring-boot:run
-   ```
-
-## API Documentation
-After starting the application, access the Swagger UI at:
-```
-http://localhost:8080/swagger-ui/index.html
+```bash
+git clone https://github.com/HoomanDevp/reservation.git
+cd reservation
 ```
 
-## Testing with Postman
-A Postman collection is included in the repository for easy API testing:
-1. Import `Azki_Reservation_System.postman_collection.json` into Postman
-2. Use the authentication flow to get a JWT token
-3. Test reservation creation, status checking, and cancellation
+Start PostgreSQL and Redis using the repository's container configuration where applicable:
 
-## Architecture
-The system follows a layered architecture with:
-
-```
-Controller → Service → Repository → Database
-                ↓
-              Redis
+```bash
+docker-compose up -d
 ```
 
-- **Controllers**: Handle HTTP requests/responses and input validation
-- **Services**: Implement business logic and transaction management
-- **Queue Service**: Manages asynchronous processing of reservation requests
-- **Repositories**: Provide data access through JPA
-- **Redis**: Used for caching, queueing, and distributed locks
+Build the project:
 
-## Key Components
+```bash
+./mvnw clean install
+```
 
-### ReservationQueueService
-Handles high-volume reservation requests through Redis-backed queues:
-- Enqueues requests for asynchronous processing
-- Dequeues and processes requests in batches
-- Provides status tracking and idempotent processing
-- Manages retries and dead letter queues
+On Windows:
 
-### ReservationService
-Core business logic for reservations:
-- Finds available time slots with optimistic locking
-- Manages reservation creation and cancellation
-- Handles conflicts and edge cases
+```cmd
+mvnw.cmd clean install
+```
 
-### RedisCleanupService
-Prevents Redis memory growth:
-- Sets TTL on all Redis keys
-- Performs scheduled cleanup of old keys
+Run the application:
 
-### RateLimitFilter & Configuration
-Protects the API from abuse:
-- Implements token bucket algorithm
-- Configurable rate limits
-- HTTP 429 responses when limits exceeded
+```bash
+./mvnw spring-boot:run
+```
+
+## Testing
+
+Run the test suite with:
+
+```bash
+./mvnw test
+```
+
+A Postman collection is included for exercising authentication, reservation creation, status tracking, and cancellation flows.
 
 ## Project Structure
-- `config/` - Application configuration classes
-- `controller/` - REST controllers and response handling
-- `dto/` - Data Transfer Objects for API requests/responses
-- `entity/` - JPA entity classes
-- `exception/` - Custom exception classes
-- `filter/` - Web filters including rate limiting
-- `repository/` - Spring Data repositories
-- `security/` - JWT authentication and security config
-- `service/` - Core business logic and services
 
-## Monitoring
-The application exposes metrics and health information through Spring Boot Actuator:
-```
-http://localhost:8080/actuator/health      # Health information
-http://localhost:8080/actuator/metrics     # Available metrics
+```text
+config/       Application configuration
+controller/   REST endpoints
+ dto/          API request and response models
+entity/       JPA entities
+exception/    Application exceptions
+filter/       Web filters, including rate limiting
+repository/   Spring Data repositories
+security/     JWT authentication and security configuration
+service/      Reservation and queue-processing logic
 ```
 
-Key metrics:
-- `reservation.queue.length` - Current queue size
-- `reservation.dlq.length` - Dead letter queue size
-- `reservation.queue.processed` - Successfully processed requests
-- `reservation.queue.errors.*` - Various error counters
+## Core Components
 
----
+### ReservationService
+
+Contains the core reservation business logic, including slot selection, reservation creation, cancellation, and conflict handling.
+
+### ReservationQueueService
+
+Coordinates Redis-backed asynchronous reservation processing, status tracking, retries, and failed-request handling.
+
+### RedisCleanupService
+
+Manages expiration and cleanup of transient Redis state to reduce stale-key accumulation.
+
+### RateLimitFilter
+
+Applies configurable request throttling and returns HTTP `429 Too Many Requests` when the configured policy is exceeded.
+
+## Design Goals
+
+The project is intended to demonstrate a reservation backend that treats concurrency and operational failure as first-class concerns rather than only implementing the happy path.
+
+The design emphasizes:
+
+- explicit reservation state
+- contention-aware persistence
+- asynchronous workload handling
+- retry and failure paths
+- observable runtime behavior
+- clear API boundaries
 
 ## License
-Free To Use License (FTUL) - see LICENSE file for details.
-## Contributors
-- Hooman Yarahmadi (<knight.hooman@gmail.com>)
+
+Free To Use License (FTUL). See `LICENSE` for details.
+
+## Author
+
+**Hooman Yarahmadi**  
+GitHub: [@HoomanDevp](https://github.com/HoomanDevp)
