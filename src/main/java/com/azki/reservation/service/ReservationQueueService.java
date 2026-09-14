@@ -7,277 +7,383 @@ import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import jakarta.annotation.PreDestroy;
-
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 基于 Redis 的异步预约队列服务。
  *
- * <p>控制器在负载较高时调用 {@link #enqueueReservationRequest(Object)}，把请求序列化为 JSON
- * 放入 Redis List；后台轮询器批量取出消息并委托 {@link ReservationService} 完成数据库写入。
- * 请求方可使用返回的 requestId 查询 QUEUED、PROCESSING、SUCCESS、FAILED 状态。</p>
- *
- * <p>Redis 在这里保存的是临时工作流状态，PostgreSQL 中的 Reservation 才是最终业务记录。</p>
+ * <p>等待消息保存在 List 中；消息被消费者领取后会原子移动到带时间戳的处理中 Sorted Set。
+ * 只有业务处理结束后才会确认删除；处理超时的消息会重新进入等待队列，因此进程异常退出时
+ * 不会因为消息已经从等待队列弹出而永久丢失。</p>
  */
 @Service
 public class ReservationQueueService {
+
+    private static final Logger logger = LoggerFactory.getLogger(ReservationQueueService.class);
+
+    static final String QUEUE_KEY = "reservation:queue";
+    static final String PROCESSING_KEY = "reservation:queue:processing";
+    static final String DLQ_KEY = "reservation:dlq";
+    static final String EMAIL_SET_KEY = "reservation:emails:queued";
+    static final String STATUS_KEY_PREFIX = "reservation:status:";
+    private static final int MAX_ATTEMPTS = 3;
+
+    /** 原子完成邮箱占位、消息入队和初始状态写入。 */
+    private static final RedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('SADD', KEYS[2], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('RPUSH', KEYS[1], ARGV[2])
+        redis.call('SET', KEYS[3], ARGV[3])
+        redis.call('EXPIRE', KEYS[3], ARGV[4])
+        return 1
+        """, Long.class);
+
+    /** 从等待队列领取一条消息，并记录领取时间。 */
+    private static final RedisScript<String> CLAIM_SCRIPT = new DefaultRedisScript<>("""
+        local item = redis.call('LPOP', KEYS[1])
+        if item then
+            redis.call('ZADD', KEYS[2], ARGV[1], item)
+        end
+        return item
+        """, String.class);
+
+    /** 确认终态，同时清理处理中记录和邮箱占位。 */
+    private static final RedisScript<Long> COMPLETE_SCRIPT = new DefaultRedisScript<>("""
+        redis.call('ZREM', KEYS[1], ARGV[1])
+        redis.call('SET', KEYS[2], ARGV[2])
+        redis.call('EXPIRE', KEYS[2], ARGV[4])
+        redis.call('SREM', KEYS[3], ARGV[3])
+        return 1
+        """, Long.class);
+
+    /** 将失败的同一条消息原子地从处理中集合移回等待队列。 */
+    private static final RedisScript<Long> REQUEUE_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('RPUSH', KEYS[2], ARGV[2])
+        redis.call('SET', KEYS[3], ARGV[3])
+        redis.call('EXPIRE', KEYS[3], ARGV[4])
+        return 1
+        """, Long.class);
+
+    /** 将达到重试上限的同一条消息原子地转移到 DLQ。 */
+    private static final RedisScript<Long> DLQ_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('RPUSH', KEYS[2], ARGV[2])
+        redis.call('SET', KEYS[3], ARGV[3])
+        redis.call('EXPIRE', KEYS[3], ARGV[5])
+        redis.call('SREM', KEYS[4], ARGV[4])
+        return 1
+        """, Long.class);
+
+    /** 无法解析的原始消息仍要保留在 DLQ 中，不能静默丢弃。 */
+    private static final RedisScript<Long> MALFORMED_TO_DLQ_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('RPUSH', KEYS[2], ARGV[1])
+        return 1
+        """, Long.class);
+
+    /** 回收领取时间早于截止值的消息，供其他轮次重新处理。 */
+    private static final RedisScript<Long> RECOVER_STALE_SCRIPT = new DefaultRedisScript<>("""
+        local items = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+        local recovered = 0
+        for _, item in ipairs(items) do
+            if redis.call('ZREM', KEYS[1], item) == 1 then
+                redis.call('RPUSH', KEYS[2], item)
+                recovered = recovered + 1
+            end
+        end
+        return recovered
+        """, Long.class);
+
     private final RedisTemplate<String, Object> redisTemplate;
     private final ReservationService reservationService;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
-    private final RedisCleanupService redisCleanupService;
-    private static final Logger logger = LoggerFactory.getLogger(ReservationQueueService.class);
-    /** 等待处理的主队列：右侧入队、左侧出队，形成 FIFO。 */
-    private static final String QUEUE_KEY = "reservation:queue";
-    /** 达到最大重试次数后存放失败消息的死信队列。 */
-    private static final String DLQ_KEY = "reservation:dlq";
-    /** 记录仍在队列中的邮箱，用于 O(1) 判断同一邮箱是否重复入队。 */
-    private static final String EMAIL_SET_KEY = "reservation:emails:queued";
-    private static final int MAX_ATTEMPTS = 3;
-    /** 每个请求状态键的前缀，完整键为 reservation:status:{requestId}。 */
-    private static final String STATUS_KEY_PREFIX = "reservation:status:";
+
     @Value("${reservation.queue.batch-size:10}")
-    private int batchSize;
+    private int batchSize = 10;
+
+    @Value("${reservation.queue.claim-timeout-ms:300000}")
+    private long claimTimeoutMs = 300_000;
+
+    @Value("${reservation.status.expiry-hours:24}")
+    private int statusExpiryHours = 24;
 
     private volatile boolean running = true;
 
-    /** 异步请求从入队到结束可能经历的状态。 */
     public enum RequestStatus {
         QUEUED, PROCESSING, SUCCESS, FAILED
     }
 
-    /**
-     * Redis 队列中的消息结构。
-     * 原始请求、已尝试次数和 requestId 必须一起序列化，才能支持状态跟踪和死信处理。
-     */
-    private static class QueueItem {
+    /** 可被 Jackson 稳定反序列化的队列消息。 */
+    static class QueueItem {
         public ReservationRequestDto request;
         public int attempts;
         public String requestId;
 
+        public QueueItem() {
+        }
 
-        public QueueItem(ReservationRequestDto request, int attempts, String requestId) {
+        QueueItem(ReservationRequestDto request, int attempts, String requestId) {
             this.request = request;
             this.attempts = attempts;
             this.requestId = requestId;
         }
     }
 
-    public String enqueueReservationRequest(Object reservationRequest) {
-        // requestId 在进入 Redis 前生成，之后贯穿队列消息和状态键。
-        String requestId = UUID.randomUUID().toString();
-        try {
-            // 当前公开调用方传入 ReservationRequestDto；这里保留 Object 签名但立即进行强制转换。
-            ReservationRequestDto req = (ReservationRequestDto) reservationRequest;
-            if (isUserAlreadyInQueue(req.getEmail())) {
-                throw new DuplicateReservationException("A reservation request for this email is already in queue");
-            }
-
-            // 1. 消息入主队列；2. 初始化状态；3. 设置 TTL；4. 标记邮箱已排队。
-            String json = objectMapper.writeValueAsString(new QueueItem((ReservationRequestDto) reservationRequest, 0, requestId));
-            redisTemplate.opsForList().rightPush(QUEUE_KEY, json);
-            String statusKey = STATUS_KEY_PREFIX + requestId;
-            redisTemplate.opsForValue().set(statusKey, RequestStatus.QUEUED.name());
-            redisCleanupService.setExpiryOnStatusKey(statusKey);
-            redisTemplate.opsForSet().add(EMAIL_SET_KEY, req.getEmail());
-        } catch (DuplicateReservationException e) {
-            throw e;
-        } catch (Exception e) {
-            logger.error("Failed to serialize reservation request: {}", reservationRequest, e);
-            throw new BusinessException("Failed to process reservation request: " + e.getMessage());
-        }
-        return requestId;
-    }
-
-    boolean isUserAlreadyInQueue(String email) {
-        // Redis Set 的成员查询是常数时间，不需要扫描整个队列。
-        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(EMAIL_SET_KEY, email));
-    }
-
-    /** 根据 requestId 读取异步处理状态；键不存在或已过期时返回 null。 */
-    public String getRequestStatus(String requestId) {
-        Object status = redisTemplate.opsForValue().get(STATUS_KEY_PREFIX + requestId);
-        return status != null ? status.toString() : null;
-    }
-
-    private QueueItem dequeueQueueItem() {
-        // 从列表左侧弹出最早进入的消息；leftPop 会立即把消息从主队列删除。
-        Object jsonObj = redisTemplate.opsForList().leftPop(QUEUE_KEY);
-        if (jsonObj instanceof String json) {
-            try {
-                return objectMapper.readValue(json, QueueItem.class);
-            } catch (Exception e) {
-                logger.error("Failed to deserialize queue item: {}", json, e);
-            }
-        }
-        return null;
-    }
-
-    private void moveToDLQ(QueueItem item) {
-        try {
-            // DLQ 保留完整消息和 attempts，便于人工排查或后续重新投递。
-            String json = objectMapper.writeValueAsString(item);
-            redisTemplate.opsForList().rightPush(DLQ_KEY, json);
-            meterRegistry.counter("reservation.dlq.moved").increment();
-            logger.warn("Moved reservation request to DLQ: {}", item.request);
-        } catch (Exception e) {
-            logger.error("Failed to move reservation request to DLQ: {}", item, e);
-        }
-    }
-
-    /** 应用关闭时停止领取新批次，让正在执行的方法自然结束。 */
-    @PreDestroy
-    public void shutdown() {
-        running = false;
-        logger.info("ReservationQueueService is shutting down. No new batches will be processed.");
-    }
-
-    /** @return 当前主队列中的待处理消息数，Redis 返回 null 时按 0 处理 */
-    public long getQueueLength() {
-        Long size = redisTemplate.opsForList().size(QUEUE_KEY);
-        return size != null ? size : 0;
-    }
-
-    /** @return 当前死信队列中的消息数，供指标和健康检查使用 */
-    public long getDLQLength() {
-        Long size = redisTemplate.opsForList().size(DLQ_KEY);
-        return size != null ? size : 0;
-    }
-
-    /**
-     * 检查同一 requestId 是否已经成功，防止重复消息再次创建预约。
-     * 这是请求级保护；业务层还会按用户未来预约进行第二层防重复。
-     */
-    private boolean isAlreadyProcessed(String requestId) {
-        String status = getRequestStatus(requestId);
-        return RequestStatus.SUCCESS.name().equals(status);
+    /** 同时保存解析后的对象和 Redis 中的原始 JSON，以便精确确认同一条消息。 */
+    private record ClaimedQueueItem(QueueItem item, String rawJson) {
     }
 
     public ReservationQueueService(
         RedisTemplate<String, Object> redisTemplate,
         ReservationService reservationService,
         ObjectMapper objectMapper,
-        MeterRegistry meterRegistry,
-        RedisCleanupService redisCleanupService
+        MeterRegistry meterRegistry
     ) {
         this.redisTemplate = redisTemplate;
         this.reservationService = reservationService;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
-        this.redisCleanupService = redisCleanupService;
-        // Gauge 保存对当前服务的引用，每次抓取指标时动态读取 Redis 队列长度。
+
         meterRegistry.gauge("reservation.queue.length", this, ReservationQueueService::getQueueLength);
+        meterRegistry.gauge("reservation.queue.processing.length", this, ReservationQueueService::getProcessingLength);
         meterRegistry.gauge("reservation.dlq.length", this, ReservationQueueService::getDLQLength);
+    }
+
+    /** 原子加入队列，避免并发请求同时通过“先查询、后写入”的去重检查。 */
+    public String enqueueReservationRequest(ReservationRequestDto request) {
+        String requestId = UUID.randomUUID().toString();
+        String statusKey = STATUS_KEY_PREFIX + requestId;
+
+        try {
+            String json = objectMapper.writeValueAsString(new QueueItem(request, 0, requestId));
+            Long result = redisTemplate.execute(
+                ENQUEUE_SCRIPT,
+                List.of(QUEUE_KEY, EMAIL_SET_KEY, statusKey),
+                request.getEmail(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
+            );
+
+            if (!Long.valueOf(1).equals(result)) {
+                throw new DuplicateReservationException("A reservation request for this email is already in queue");
+            }
+            return requestId;
+        } catch (DuplicateReservationException e) {
+            throw e;
+        } catch (Exception e) {
+            logger.error("Failed to enqueue reservation request for email {}", request.getEmail(), e);
+            throw new BusinessException("Failed to process reservation request");
+        }
+    }
+
+    boolean isUserAlreadyInQueue(String email) {
+        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(EMAIL_SET_KEY, email));
+    }
+
+    public String getRequestStatus(String requestId) {
+        Object status = redisTemplate.opsForValue().get(STATUS_KEY_PREFIX + requestId);
+        return status != null ? status.toString() : null;
+    }
+
+    private ClaimedQueueItem claimNextItem() {
+        String rawJson = redisTemplate.execute(
+            CLAIM_SCRIPT, List.of(QUEUE_KEY, PROCESSING_KEY), System.currentTimeMillis()
+        );
+        if (rawJson == null) {
+            return null;
+        }
+
+        try {
+            return new ClaimedQueueItem(objectMapper.readValue(rawJson, QueueItem.class), rawJson);
+        } catch (Exception e) {
+            logger.error("Failed to deserialize queue item; moving raw message to DLQ: {}", rawJson, e);
+            moveMalformedClaimToDLQ(rawJson);
+            return null;
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        running = false;
+        logger.info("ReservationQueueService is shutting down. No new batches will be processed.");
+    }
+
+    public long getQueueLength() {
+        Long size = redisTemplate.opsForList().size(QUEUE_KEY);
+        return size != null ? size : 0;
+    }
+
+    public long getProcessingLength() {
+        Long size = redisTemplate.opsForZSet().size(PROCESSING_KEY);
+        return size != null ? size : 0;
+    }
+
+    public long getDLQLength() {
+        Long size = redisTemplate.opsForList().size(DLQ_KEY);
+        return size != null ? size : 0;
+    }
+
+    private boolean isAlreadyProcessed(String requestId) {
+        return RequestStatus.SUCCESS.name().equals(getRequestStatus(requestId));
     }
 
     @Scheduled(fixedDelayString = "${reservation.queue.poll-interval-ms:100}")
     public void processReservationQueue() {
-        // fixedDelay 表示上一次执行结束后再等待指定毫秒；每轮最多处理 batchSize 条。
-        if (!running) return;
-        for (int i = 0; i < batchSize; i++) {
-            QueueItem item = dequeueQueueItem();
-            if (item == null) break;
+        if (!running) {
+            return;
+        }
 
-            String requestId = item.requestId;
-            if (requestId != null) {
-                if (isAlreadyProcessed(requestId)) {
-                    // 消息已由 leftPop 移出，此处只需跳过重复处理。
-                    continue;
-                }
-                // 在真正调用数据库服务前标记 PROCESSING，并刷新状态键 TTL。
-                String statusKey = STATUS_KEY_PREFIX + requestId;
-                redisTemplate.opsForValue().set(statusKey, RequestStatus.PROCESSING.name());
-                redisCleanupService.setExpiryOnStatusKey(statusKey);
+        recoverStaleClaims();
+        for (int i = 0; i < batchSize; i++) {
+            ClaimedQueueItem claimed = claimNextItem();
+            if (claimed == null) {
+                break;
             }
 
+            QueueItem item = claimed.item();
+            if (!isValid(item)) {
+                moveMalformedClaimToDLQ(claimed.rawJson());
+                continue;
+            }
+            if (isAlreadyProcessed(item.requestId)) {
+                complete(claimed, RequestStatus.SUCCESS);
+                continue;
+            }
+
+            updateStatus(item.requestId, RequestStatus.PROCESSING);
             try {
-                // 异步路径与同步路径共用同一领域服务，避免两套预约规则产生差异。
                 reservationService.reserveNearestSlot(item.request.getEmail());
                 meterRegistry.counter("reservation.queue.processed").increment();
-                if (requestId != null) {
-                    String statusKey = STATUS_KEY_PREFIX + requestId;
-                    redisTemplate.opsForValue().set(statusKey, RequestStatus.SUCCESS.name());
-                    redisCleanupService.setExpiryOnStatusKey(statusKey);
-                }
-                // 请求已经结束，释放邮箱去重标记，允许该用户未来再次发起请求。
-                redisTemplate.opsForSet().remove(EMAIL_SET_KEY, item.request.getEmail());
+                complete(claimed, RequestStatus.SUCCESS);
             } catch (DuplicateReservationException e) {
-                // 重复预约属于确定性的业务结果，重试不会改变结果，因此直接失败。
                 logger.info("Skipping duplicate reservation: {}", item.request.getEmail());
                 meterRegistry.counter("reservation.queue.duplicate").increment();
-                if (requestId != null) {
-                    String statusKey = STATUS_KEY_PREFIX + requestId;
-                    redisTemplate.opsForValue().set(statusKey, RequestStatus.FAILED.name() + ": " + e.getMessage());
-                    redisCleanupService.setExpiryOnStatusKey(statusKey);
-                }
-                // 失败已经终结，同样需要释放邮箱去重标记。
-                redisTemplate.opsForSet().remove(EMAIL_SET_KEY, item.request.getEmail());
+                complete(claimed, RequestStatus.FAILED);
             } catch (ReservationNotAvailableException e) {
-                // 没有可用时段也属于不可重试结果，直接记录 FAILED。
                 logger.info("No slots available for reservation: {}", item.request.getEmail());
                 meterRegistry.counter("reservation.queue.no_slots").increment();
-                if (requestId != null) {
-                    String statusKey = STATUS_KEY_PREFIX + requestId;
-                    redisTemplate.opsForValue().set(statusKey, RequestStatus.FAILED.name() + ": " + e.getMessage());
-                    redisCleanupService.setExpiryOnStatusKey(statusKey);
-                }
-                // 请求终结后从 queued email 集合移除。
-                redisTemplate.opsForSet().remove(EMAIL_SET_KEY, item.request.getEmail());
+                complete(claimed, RequestStatus.FAILED);
             } catch (ReservationCapacityExceededException e) {
-                // 高并发容量错误可能是暂时的，进入统一重试流程。
-                handleRetryableError(item, requestId, e, "capacity_exceeded");
+                handleRetryableError(claimed, e, "capacity_exceeded");
             } catch (BusinessException e) {
-                // 其余业务异常按当前设计也会尝试重试。
-                handleRetryableError(item, requestId, e, "business_rule");
+                handleRetryableError(claimed, e, "business_rule");
             } catch (Exception e) {
-                // 未分类的技术异常（数据库、序列化等）按技术错误记录指标。
-                handleRetryableError(item, requestId, e, "technical");
+                handleRetryableError(claimed, e, "technical");
             }
         }
     }
 
-    private void handleRetryableError(QueueItem item, String requestId, Exception e, String errorType) {
-        // attempts 表示该消息已经失败的次数，而不是还可重试的次数。
+    private boolean isValid(QueueItem item) {
+        return item != null && item.requestId != null && item.request != null
+            && item.request.getEmail() != null;
+    }
+
+    private void updateStatus(String requestId, RequestStatus status) {
+        String statusKey = STATUS_KEY_PREFIX + requestId;
+        redisTemplate.opsForValue().set(statusKey, status.name());
+        redisTemplate.expire(statusKey, statusExpirySeconds(), TimeUnit.SECONDS);
+    }
+
+    private void complete(ClaimedQueueItem claimed, RequestStatus status) {
+        QueueItem item = claimed.item();
+        redisTemplate.execute(
+            COMPLETE_SCRIPT,
+            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, EMAIL_SET_KEY),
+            claimed.rawJson(), status.name(), item.request.getEmail(), statusExpirySeconds()
+        );
+    }
+
+    private void handleRetryableError(ClaimedQueueItem claimed, Exception error, String errorType) {
+        QueueItem item = claimed.item();
         item.attempts++;
-        logger.error("Failed to process reservation request (attempt {}, type: {}): {}", item.attempts, errorType, item.request, e);
+        logger.error("Failed to process reservation request (attempt {}, type: {}, requestId: {})",
+            item.attempts, errorType, item.requestId, error);
         meterRegistry.counter("reservation.queue.process.errors." + errorType).increment();
+
         if (item.attempts >= MAX_ATTEMPTS) {
-            // 重试耗尽：保留到 DLQ、写最终状态并解除邮箱占用。
-            moveToDLQ(item);
-            if (requestId != null) {
-                redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
-                    RequestStatus.FAILED.name() + ": " + e.getMessage());
-            }
-            // 请求已终结，允许相同邮箱重新提交新请求。
-            redisTemplate.opsForSet().remove(EMAIL_SET_KEY, item.request.getEmail());
-            // 注意：当前消息在 dequeueQueueItem 中已经 leftPop；这里再次 leftPop 会删除下一条消息。
-            redisTemplate.opsForList().leftPop(QUEUE_KEY);
-        } else {
-            try {
-                // 注意：当前消息已被弹出，set(0) 修改的是下一条消息，并非把当前消息重新入队。
-                // 此处保留现有行为但明确标注风险，后续应改成原子重新入队或 Redis Streams ACK 模型。
-                String updatedJson = objectMapper.writeValueAsString(item);
-                redisTemplate.opsForList().set(QUEUE_KEY, 0, updatedJson);
-            } catch (Exception ex) {
-                logger.error("Failed to re-enqueue reservation request: {}", item, ex);
-                moveToDLQ(item);
-                if (requestId != null) {
-                    redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, RequestStatus.FAILED.name());
-                }
-                // 无法重新序列化时只能终结请求并清理邮箱标记。
-                redisTemplate.opsForSet().remove(EMAIL_SET_KEY, item.request.getEmail());
-                // 当前实现会再次移除队首，存在误删下一条消息的风险。
-                redisTemplate.opsForList().leftPop(QUEUE_KEY);
-            }
+            moveToDLQ(claimed);
+            return;
         }
+
+        try {
+            String updatedJson = objectMapper.writeValueAsString(item);
+            Long requeued = redisTemplate.execute(
+                REQUEUE_SCRIPT,
+                List.of(PROCESSING_KEY, QUEUE_KEY, STATUS_KEY_PREFIX + item.requestId),
+                claimed.rawJson(), updatedJson, RequestStatus.QUEUED.name(), statusExpirySeconds()
+            );
+            if (!Long.valueOf(1).equals(requeued)) {
+                logger.warn("Retry skipped because processing claim no longer exists: {}", item.requestId);
+            }
+        } catch (Exception serializationError) {
+            logger.error("Failed to serialize retry message: {}", item.requestId, serializationError);
+            moveToDLQ(claimed);
+        }
+    }
+
+    private void moveToDLQ(ClaimedQueueItem claimed) {
+        QueueItem item = claimed.item();
+        String dlqJson = claimed.rawJson();
+        try {
+            dlqJson = objectMapper.writeValueAsString(item);
+        } catch (Exception e) {
+            logger.error("Failed to serialize final DLQ message; preserving original payload: {}", item.requestId, e);
+        }
+
+        Long moved = redisTemplate.execute(
+            DLQ_SCRIPT,
+            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, EMAIL_SET_KEY),
+            claimed.rawJson(), dlqJson, RequestStatus.FAILED.name(), item.request.getEmail(),
+            statusExpirySeconds()
+        );
+        if (Long.valueOf(1).equals(moved)) {
+            meterRegistry.counter("reservation.dlq.moved").increment();
+            logger.warn("Moved reservation request to DLQ: {}", item.requestId);
+        }
+    }
+
+    private void moveMalformedClaimToDLQ(String rawJson) {
+        Long moved = redisTemplate.execute(
+            MALFORMED_TO_DLQ_SCRIPT, List.of(PROCESSING_KEY, DLQ_KEY), rawJson
+        );
+        if (Long.valueOf(1).equals(moved)) {
+            meterRegistry.counter("reservation.dlq.malformed").increment();
+        }
+    }
+
+    long recoverStaleClaims() {
+        long cutoff = System.currentTimeMillis() - claimTimeoutMs;
+        Long recovered = redisTemplate.execute(
+            RECOVER_STALE_SCRIPT, List.of(PROCESSING_KEY, QUEUE_KEY), cutoff
+        );
+        long count = recovered != null ? recovered : 0;
+        if (count > 0) {
+            meterRegistry.counter("reservation.queue.claims.recovered").increment(count);
+            logger.warn("Recovered {} stale reservation queue claims", count);
+        }
+        return count;
+    }
+
+    private long statusExpirySeconds() {
+        return TimeUnit.HOURS.toSeconds(statusExpiryHours);
     }
 }

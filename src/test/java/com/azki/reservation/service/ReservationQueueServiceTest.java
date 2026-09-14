@@ -12,8 +12,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -34,12 +34,6 @@ class ReservationQueueServiceTest {
     @Mock
     private ValueOperations<String, Object> valueOperations;
 
-    @Mock
-    private SetOperations<String, Object> setOperations;
-
-    @Mock
-    private RedisCleanupService redisCleanupService;
-
     private ObjectMapper objectMapper;
     private MeterRegistry meterRegistry;
     private ReservationQueueService queueService;
@@ -49,7 +43,7 @@ class ReservationQueueServiceTest {
         objectMapper = new ObjectMapper();
         meterRegistry = new SimpleMeterRegistry();
 
-        queueService = new ReservationQueueService(redisTemplate, reservationService, objectMapper, meterRegistry,redisCleanupService);
+        queueService = new ReservationQueueService(redisTemplate, reservationService, objectMapper, meterRegistry);
     }
 
     @Test
@@ -57,20 +51,21 @@ class ReservationQueueServiceTest {
         // 准备：构造合法预约请求。
         ReservationRequestDto request = new ReservationRequestDto();
         request.setEmail("test@example.com");
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        when(redisTemplate.opsForList()).thenReturn(listOperations);
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(setOperations.isMember("reservation:emails:queued", "test@example.com")).thenReturn(false);
+        when(redisTemplate.execute(
+            any(RedisScript.class), anyList(), any(), any(), any(), any()
+        )).thenReturn(1L);
 
         // 执行：请求入队。
         String requestId = queueService.enqueueReservationRequest(request);
 
         // 验证：生成 requestId，并写入队列与初始状态。
         assertNotNull(requestId);
-        verify(listOperations).rightPush(anyString(), anyString());
-        verify(valueOperations).set(contains("reservation:status:"), eq(ReservationQueueService.RequestStatus.QUEUED.name()));
-        verify(redisCleanupService).setExpiryOnStatusKey(contains("reservation:status:"));
-        verify(setOperations).add("reservation:emails:queued", "test@example.com");
+        verify(redisTemplate).execute(
+            any(RedisScript.class),
+            argThat(keys -> keys.contains("reservation:queue") && keys.contains("reservation:emails:queued")),
+            eq("test@example.com"), anyString(),
+            eq(ReservationQueueService.RequestStatus.QUEUED.name()), anyLong()
+        );
     }
 
     @Test
@@ -125,12 +120,16 @@ class ReservationQueueServiceTest {
         ReservationRequestDto request = new ReservationRequestDto();
         request.setEmail("test@example.com");
 
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        when(setOperations.isMember("reservation:emails:queued", "test@example.com")).thenReturn(true);
+        when(redisTemplate.execute(
+            any(RedisScript.class), anyList(), any(), any(), any(), any()
+        )).thenReturn(0L);
 
         // 执行并验证：重复请求应抛异常，且不能再次写主队列。
         assertThrows(DuplicateReservationException.class, () -> queueService.enqueueReservationRequest(request));
 
-        verify(listOperations, never()).rightPush(anyString(), any());
+        verify(redisTemplate).execute(
+            any(RedisScript.class), anyList(), eq("test@example.com"),
+            anyString(), eq(ReservationQueueService.RequestStatus.QUEUED.name()), anyLong()
+        );
     }
 }
