@@ -99,8 +99,8 @@ The API also includes:
 The application exposes health and metrics through Spring Boot Actuator.
 
 ```text
-GET /actuator/health
-GET /actuator/metrics
+GET http://localhost:8081/actuator/health
+GET http://localhost:8081/actuator/metrics
 ```
 
 Prometheus integration is provided through Micrometer.
@@ -135,6 +135,8 @@ Reservation behavior can be configured through `application.yml`.
 
 ```yaml
 reservation:
+  scheduling:
+    enabled: true
   queue:
     batch-size: 50
     poll-interval-ms: 10
@@ -161,7 +163,7 @@ cd reservation
 Start PostgreSQL and Redis using the repository's container configuration where applicable:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Build the project:

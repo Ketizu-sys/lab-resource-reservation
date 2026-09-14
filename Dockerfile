@@ -15,6 +15,8 @@ RUN mkdir -p target/dependency && (cd target/dependency; jar -xf ../*.jar)
 # 第二阶段只保留体积更小的 JRE 和实际运行文件。
 FROM eclipse-temurin:21-jre-alpine
 VOLUME /tmp
+# Compose 使用 curl 调用独立的 Actuator 端口执行容器健康检查。
+RUN apk add --no-cache curl
 ARG DEPENDENCY=/workspace/app/target/dependency
 # 分别复制第三方依赖、元信息和项目自身编译结果。
 COPY --from=build ${DEPENDENCY}/BOOT-INF/lib /app/lib

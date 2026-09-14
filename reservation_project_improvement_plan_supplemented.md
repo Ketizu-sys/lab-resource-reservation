@@ -522,6 +522,8 @@ status = SUCCESS
 
 ### P2-1：Docker Compose 健康检查有多处不一致
 
+> 当前进度：配置层问题已修正，包括 PostgreSQL 探针用户、Redis 环境变量名、Actuator 探针端口、8081 端口映射和运行镜像中的 `curl`。`docker compose config` 已通过；完整镜像构建与三服务 healthy 验收暂受 Docker Hub 连接中断影响。
+
 #### PostgreSQL 用户不一致
 
 容器创建用户是 `azki`，健康检查却执行：
