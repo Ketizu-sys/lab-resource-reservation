@@ -5,6 +5,7 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
 
+    <!-- 初始化核心表：用户、可用时段、预约。 -->
     <changeSet id="1-create-initial-tables" author="m.yarahmadi">
         <createTable tableName="users">
             <column name="id" type="BIGINT" autoIncrement="true">
@@ -96,6 +97,7 @@
             </column>
         </createTable>
     </changeSet>
+    <!-- 插入原始演示用户和固定日期时段；后续修正通过新的 changeSet 完成。 -->
     <changeSet id="1-insert-initial-data" author="m.yarahmadi">
         <sql>
         <![CDATA[

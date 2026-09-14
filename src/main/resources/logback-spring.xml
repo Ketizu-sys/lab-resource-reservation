@@ -2,19 +2,19 @@
 <configuration>
     <include resource="org/springframework/boot/logging/logback/base.xml"/>
 
-    <!-- Common pattern layout with colors -->
+    <!-- 公共日志格式：控制台带颜色，文件使用纯文本 -->
     <property name="CONSOLE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%boldYellow(%thread)] %boldCyan(%logger{36}) - %msg%n"/>
     <property name="FILE_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"/>
     <property name="SECURITY_LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [SECURITY] %boldRed(%msg)%n"/>
 
-    <!-- General application console appender -->
+    <!-- 普通应用日志输出到控制台 -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${CONSOLE_LOG_PATTERN}</pattern>
         </encoder>
     </appender>
 
-    <!-- General application file appender -->
+    <!-- 普通应用日志按天滚动写入文件，保留 30 天 -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/reservation-app.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
@@ -26,31 +26,31 @@
         </encoder>
     </appender>
 
-    <!-- Security audit log appender -->
+    <!-- 安全审计日志独立存放并保留 90 天 -->
     <appender name="SECURITY_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/security-audit.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <fileNamePattern>logs/security-audit.%d{yyyy-MM-dd}.log</fileNamePattern>
-            <maxHistory>90</maxHistory> <!-- Keep security logs longer -->
+            <maxHistory>90</maxHistory> <!-- 安全日志需要保留更长时间 -->
         </rollingPolicy>
         <encoder>
             <pattern>${SECURITY_LOG_PATTERN}</pattern>
         </encoder>
     </appender>
 
-    <!-- Configure loggers -->
+    <!-- 安全审计 Logger 同时写入独立文件和控制台 -->
     <logger name="SECURITY_AUDIT" level="INFO" additivity="false">
         <appender-ref ref="SECURITY_FILE" />
         <appender-ref ref="STDOUT" />
     </logger>
 
-    <!-- Root logger -->
+    <!-- 默认根日志同时写控制台和普通日志文件 -->
     <root level="INFO">
         <appender-ref ref="STDOUT" />
         <appender-ref ref="FILE" />
     </root>
 
-    <!-- Profile-specific settings -->
+    <!-- 不同 Spring Profile 使用不同日志详细程度和输出位置 -->
     <springProfile name="dev">
         <root level="DEBUG">
             <appender-ref ref="STDOUT" />
@@ -63,7 +63,7 @@
         <root level="INFO">
             <appender-ref ref="FILE" />
         </root>
-        <!-- Even in prod, keep SECURITY_AUDIT at INFO level minimum -->
+        <!-- 生产环境中安全审计至少保留 INFO 级别 -->
         <logger name="SECURITY_AUDIT" level="INFO">
             <appender-ref ref="SECURITY_FILE" />
         </logger>

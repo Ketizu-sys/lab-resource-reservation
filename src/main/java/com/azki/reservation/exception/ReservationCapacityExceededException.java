@@ -1,9 +1,6 @@
 package com.azki.reservation.exception;
 
-/**
- * Exception thrown when the system has reached capacity limits
- * (e.g., no more slots available for a given day or resource).
- */
+/** 高并发下多次抢占失败或系统容量暂时不足时抛出。 */
 public class ReservationCapacityExceededException extends BusinessException {
     public ReservationCapacityExceededException(String message) {
         super(message);

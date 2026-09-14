@@ -25,7 +25,10 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Service for handling reservation operations such as reserving, cancelling, and finding available slots.
+ * 预约领域的核心业务服务。
+ *
+ * <p>负责校验用户、阻止重复预约、选择最近时段、写入预约、取消预约，
+ * 并在时段状态改变后维护缓存一致性。同步接口和 Redis 队列最终都会调用本类。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -41,23 +44,23 @@ public class ReservationService {
     private static final Logger logger = LoggerFactory.getLogger(ReservationService.class);
 
     /**
-     * Finds and caches the next available time slot.
-     * This method delegates to the CacheableOperations interface to ensure proper caching.
+     * 查询最近空闲时段，实际缓存逻辑委托给独立 Bean，以确保经过 Spring 缓存代理。
      *
-     * @return Optional containing the next available TimeSlot, or empty if none found.
+     * @return 最近空闲时段；没有候选时返回空 Optional
      */
     public Optional<AvailableSlot> findNextAvailableSlotCached() {
         return cacheableOperations.findNextAvailableSlotCached(LocalDateTime.now());
     }
 
     /**
-     * Reserves the nearest available time slot for the given user email with optimistic locking
-     * to handle concurrency. Retries up to MAX_RETRY_ATTEMPTS times if reservation fails due to
-     * concurrent modification by another transaction.
+     * 为指定邮箱的用户预约当前时间之后最近的空闲时段。
      *
-     * @param email the user's email
-     * @return the created Reservation
-     * @throws BusinessException if the user is not found or no available time slots exist
+     * <p>整个流程在一个事务中完成；若 Hibernate 报告乐观锁冲突，Spring Retry
+     * 计划最多执行三次并使用递增退避。只有应用启用 Retry AOP 时该注解才会生效。</p>
+     *
+     * @param email 发起预约的用户邮箱
+     * @return 已持久化的预约记录
+     * @throws BusinessException 用户不存在、已有未来预约或没有可用时段时抛出
      */
     @Retryable(
         value = OptimisticLockingFailureException.class,
@@ -75,7 +78,7 @@ public class ReservationService {
                     });
             logger.debug("Found user: id={}, email={}", user.getId(), user.getEmail());
 
-            // Check if user already has a pending reservation
+            // 业务约束：同一用户不能同时拥有另一条未来预约。
             if (reservationRepository.existsByUserEmailAndStartTimeAfter(email, LocalDateTime.now())) {
                 logger.warn("Duplicate reservation attempt detected for user: {}", email);
                 throw new DuplicateReservationException("User already has an active reservation");
@@ -94,13 +97,13 @@ public class ReservationService {
     }
 
     /**
-     * Recovery method for handling OptimisticLockingFailureException when all retry attempts are exhausted.
-     * This method must match the signature expected by the @Retryable method but with the exception as the first parameter.
+     * 乐观锁重试全部耗尽后的恢复入口。
+     * 方法参数需与被重试方法一致，并在最前面增加触发恢复的异常参数。
      *
-     * @param e The OptimisticLockingFailureException that caused retries to fail
-     * @param email The user's email (from the original method parameter)
-     * @return Never returns a Reservation, always throws an exception
-     * @throws ReservationCapacityExceededException when recovery is needed
+     * @param e 最终一次乐观锁异常
+     * @param email 原预约方法收到的用户邮箱
+     * @return 本实现不会正常返回
+     * @throws ReservationCapacityExceededException 将并发冲突转换为容量繁忙提示
      */
     @Recover
     public Reservation recoverFromOptimisticLockingFailure(OptimisticLockingFailureException e, String email) {
@@ -110,19 +113,19 @@ public class ReservationService {
     }
 
     /**
-     * Helper method to perform a single reservation attempt with optimistic locking.
+     * 执行一次实际的时段占用和预约写入。
      *
-     * @param user the user making the reservation
-     * @return the created reservation
-     * @throws ReservationNotAvailableException if no slots are available
-     * @throws OptimisticLockingFailureException if concurrent modification is detected
+     * @param user 发起预约的持久化用户
+     * @return 新建并保存的预约
+     * @throws ReservationNotAvailableException 没有候选时段或候选时段已被占用
+     * @throws OptimisticLockingFailureException 保存期间发现实体版本冲突
      */
     @Transactional(noRollbackFor = OptimisticLockingFailureException.class)
     protected Reservation attemptReservation(User user) {
         AvailableSlot slot = findNextAvailableSlotCached()
                 .orElseThrow(() -> new ReservationNotAvailableException("No available time slots"));
 
-        // Double-check the slot is still available in current database state
+        // 缓存中的时段可能已经过期，因此按 ID 重新读取数据库中的最新状态。
         AvailableSlot freshSlot = timeSlotRepository.findById(slot.getId())
                 .orElseThrow(() -> new ReservationNotAvailableException("Time slot no longer exists"));
 
@@ -133,6 +136,7 @@ public class ReservationService {
         }
 
         freshSlot.setReserved(true);
+        // 保存时 Hibernate 会校验 Auditable.version，避免静默覆盖其他事务的更新。
         AvailableSlot savedSlot = timeSlotRepository.save(freshSlot);
         logger.info("Slot {} reserved for user {}", savedSlot.getId(), user.getEmail());
 
@@ -149,10 +153,10 @@ public class ReservationService {
     }
 
     /**
-     * Cancels a reservation by its ID and frees the associated time slot. Also evicts the cache.
+     * 根据预约 ID 取消预约：释放时段、删除预约记录并清除最近时段缓存。
      *
-     * @param id the reservation ID
-     * @throws BusinessException if the reservation is not found
+     * @param id 预约主键
+     * @throws BusinessException 找不到预约时抛出
      */
     @Transactional
     public void cancelReservation(Long id) {
@@ -172,9 +176,7 @@ public class ReservationService {
         evictNextSlotCache();
     }
 
-    /**
-     * Evicts the cache entry for the next available slot.
-     */
+    /** 统一封装缓存失效调用，所有改变时段可用性的流程都应经过这里。 */
     private void evictNextSlotCache() {
         cacheableOperations.evictNextSlotCache();
     }

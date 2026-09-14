@@ -15,8 +15,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Service responsible for managing reservation expirations and
- * automatically freeing up unclaimed slots.
+ * 预约过期清理服务。
+ *
+ * <p>定期找出创建时间早于阈值的预约，释放其时段并删除预约记录。
+ * 当前“过期”按 createdDate 判断，而不是按时段开始或结束时间判断。</p>
  */
 @Service
 public class ReservationExpiryService {
@@ -40,8 +42,8 @@ public class ReservationExpiryService {
     }
 
     /**
-     * Scheduled task that runs at a configured interval to detect and handle expired reservations.
-     * Default is to run every 15 minutes.
+     * 周期性处理过期预约，默认每 15 分钟执行一次。
+     * 整个批次位于一个事务中，但循环内会捕获单条记录的异常并继续处理后续记录。
      */
     @Scheduled(fixedDelayString = "${reservation.expiry.check-minutes:15}000")
     @Transactional
@@ -61,12 +63,12 @@ public class ReservationExpiryService {
 
         for (Reservation reservation : expiredReservations) {
             try {
-                // Free up the time slot
+                // 先释放关联时段，使其能够再次被分配。
                 AvailableSlot slot = reservation.getAvailableSlot();
                 slot.setReserved(false);
                 timeSlotRepository.save(slot);
 
-                // Delete the reservation
+                // 再删除已经过期的预约记录。
                 reservationRepository.delete(reservation);
 
                 logger.info("Expired reservation deleted: id={}, user={}, slot={}",
@@ -78,7 +80,7 @@ public class ReservationExpiryService {
             }
         }
 
-        // Clear cache to reflect the newly available slots
+        // 时段可用性发生变化，清缓存以免继续返回旧结果。
         cacheableOperations.evictNextSlotCache();
 
         logger.info("Completed expired reservations cleanup, processed {} reservations",

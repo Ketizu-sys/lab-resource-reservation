@@ -1,12 +1,14 @@
 version: '3.8'
 
 services:
+  # Spring Boot 业务应用，依赖 PostgreSQL 和 Redis 健康后启动。
   app:
     build: .
     restart: always
     ports:
       - "8080:8080"
     environment:
+      # 容器内通过服务名 postgres/redis 访问依赖，覆盖本地开发配置。
       - SPRING_PROFILES_ACTIVE=dev
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/reservationdb
       - SPRING_DATASOURCE_USERNAME=azki
@@ -22,14 +24,17 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      # 将应用日志保存到 Docker 命名卷，容器重建后仍可保留。
       - app-logs:/app/logs
     healthcheck:
+      # 周期调用 Actuator 判断应用是否可服务。
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 40s
 
+  # 保存用户、时段和预约的持久化数据库。
   postgres:
     image: postgres:15-alpine
     restart: always
@@ -41,7 +46,7 @@ services:
       - POSTGRES_PASSWORD=azki!p@ss
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Optional: Add initialization scripts if needed
+      # 可选：需要额外初始化数据库时，可把脚本挂载到下面的目录
       # - ./src/main/resources/db/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reservation_user -d reservationdb"]
@@ -50,6 +55,7 @@ services:
       retries: 5
       start_period: 10s
 
+  # 提供缓存、排队、状态跟踪和临时去重。
   redis:
     image: redis:7
     restart: always
@@ -65,6 +71,7 @@ services:
       start_period: 10s
 
 volumes:
+  # 三个服务的数据分别持久化，避免互相耦合。
   app-logs:
   postgres-data:
   redis-data:

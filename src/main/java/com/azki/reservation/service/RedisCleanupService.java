@@ -12,8 +12,10 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Service responsible for cleaning up Redis resources to prevent memory growth.
- * Periodically scans and removes old keys related to reservation status tracking.
+ * Redis 状态键的过期管理服务。
+ *
+ * <p>新建状态键时立即设置 TTL；每天凌晨还会检查历史遗留的、没有 TTL 的状态键，
+ * 防止请求状态永久占用 Redis 内存。</p>
  */
 @Service
 public class RedisCleanupService {
@@ -31,28 +33,25 @@ public class RedisCleanupService {
     }
 
     /**
-     * Apply TTL to new status keys when they're created
-     * @param key The status key
+     * 为新建的请求状态键设置存活时间。
+     * @param key 完整的 Redis 状态键
      */
     public void setExpiryOnStatusKey(String key) {
         redisTemplate.expire(key, statusExpiryHours, TimeUnit.HOURS);
     }
 
-    /**
-     * Runs every day at 2 AM to clean up old status keys
-     * that might have been created before TTL was implemented
-     */
+    /** 每天凌晨 2 点为历史遗留的无 TTL 状态键补设过期时间。 */
     @Scheduled(cron = "0 0 2 * * ?")
     public void cleanupOldStatusKeys() {
         logger.info("Starting scheduled cleanup of old reservation status keys");
         try {
-            // Use scan command with count option to avoid blocking Redis
+            // 找到所有预约状态键。注意：RedisTemplate.keys 实际执行 KEYS，大数据量时可能阻塞 Redis。
             Set<String> keys = redisTemplate.keys(STATUS_KEY_PREFIX + "*");
 
             if (!keys.isEmpty()) {
                 int count = 0;
                 for (String key : keys) {
-                    // Check if key already has TTL, if not set it
+                    // getExpire 大于 0 说明已有有效 TTL；否则补设默认过期时间。
                     Duration ttl = redisTemplate.getExpire(key, TimeUnit.SECONDS) > 0
                         ? null : Duration.ofHours(statusExpiryHours);
 

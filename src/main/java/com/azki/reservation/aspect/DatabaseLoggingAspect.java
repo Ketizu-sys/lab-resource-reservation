@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StopWatch;
 
 /**
- * Aspect for database operation logging.
- * Logs database queries, transaction management, and database-related exceptions.
+ * 数据库访问专用日志切面。
+ * 负责记录 Repository 耗时、事务提交/回滚以及数据访问异常。
  */
 @Aspect
 @Component
@@ -24,25 +24,19 @@ public class DatabaseLoggingAspect {
 
     private static final Logger dbLogger = LoggerFactory.getLogger("DB_OPERATIONS");
 
-    /**
-     * Pointcut that matches all repository classes in our application
-     */
+    /** 匹配 repository 包中任意方法。 */
     @Pointcut("execution(* com.azki.reservation.repository.*.*(..))")
     public void repositoryMethods() {
-        // Method is empty as this is just a Pointcut
+        // 仅声明切点，不执行实际逻辑。
     }
 
-    /**
-     * Pointcut that matches all methods related to database transactions
-     */
+    /** 匹配带 Transactional 注解的方法。 */
     @Pointcut("@annotation(org.springframework.transaction.annotation.Transactional)")
     public void transactionalMethods() {
-        // Method is empty as this is just a Pointcut
+        // 仅声明切点，不执行实际逻辑。
     }
 
-    /**
-     * Log the execution time of repository methods and queries
-     */
+    /** 统计 Repository 方法耗时，并根据耗时选择不同日志级别。 */
     @Around("repositoryMethods()")
     public Object logQueryPerformance(ProceedingJoinPoint joinPoint) throws Throwable {
         String repoName = joinPoint.getSignature().getDeclaringTypeName();
@@ -60,11 +54,11 @@ public class DatabaseLoggingAspect {
             stopWatch.stop();
             long executionTime = stopWatch.getTotalTimeMillis();
 
-            // Different logging levels based on query duration
-            if (executionTime > 1000) { // Queries taking more than 1 second
+            // 超过 1 秒视为慢查询，100ms～1 秒作为普通信息，其余只在 DEBUG 输出。
+            if (executionTime > 1000) {
                 dbLogger.warn("SLOW QUERY: {}.{} - execution time: {}ms",
                     repoName, methodName, executionTime);
-            } else if (executionTime > 100) { // Queries taking more than 100ms
+            } else if (executionTime > 100) {
                 dbLogger.info("Database operation completed: {}.{} - execution time: {}ms",
                     repoName, methodName, executionTime);
             } else {
@@ -75,9 +69,7 @@ public class DatabaseLoggingAspect {
         }
     }
 
-    /**
-     * Log database-related exceptions
-     */
+    /** 捕获 Repository 或事务方法抛出的异常，数据库异常会额外提取 SQLState。 */
     @AfterThrowing(pointcut = "repositoryMethods() || transactionalMethods()", throwing = "exception")
     public void logDatabaseException(JoinPoint joinPoint, Exception exception) {
         String methodName = joinPoint.getSignature().getName();
@@ -95,9 +87,7 @@ public class DatabaseLoggingAspect {
         }
     }
 
-    /**
-     * Log transaction boundaries
-     */
+    /** 在事务方法外围记录开始、提交和回滚边界。 */
     @Around("transactionalMethods()")
     public Object logTransactionBoundary(ProceedingJoinPoint joinPoint) throws Throwable {
         String methodName = joinPoint.getSignature().getName();
@@ -116,9 +106,7 @@ public class DatabaseLoggingAspect {
         }
     }
 
-    /**
-     * Helper method to estimate number of affected rows based on repository method result
-     */
+    /** 根据方法名和返回值粗略记录数据修改或查询条数。 */
     private void logAffectedRows(String methodName, Object result) {
         if (methodName.startsWith("save") || methodName.startsWith("update")) {
             dbLogger.debug("Data modified: 1 row affected");
@@ -135,9 +123,7 @@ public class DatabaseLoggingAspect {
         }
     }
 
-    /**
-     * Helper method to extract SQL state from database exceptions
-     */
+    /** 尝试从 Spring 数据访问异常的底层 SQLException 中提取 SQLState。 */
     private String extractSqlState(DataAccessException ex) {
         try {
             java.sql.SQLException sqlEx = (java.sql.SQLException) ex.getCause();

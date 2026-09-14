@@ -15,7 +15,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "Reservation API", description = "مدیریت رزرو زمان")
+/**
+ * 预约业务的 HTTP 入口。
+ *
+ * <p>创建预约时先通过 {@link LoadMonitoringService} 判断当前实例的并发压力：
+ * 低负载时同步写数据库，高负载时把请求放进 Redis 队列。查询状态仅适用于排队请求。</p>
+ */
+@Tag(name = "预约管理", description = "创建预约、查询排队状态和取消预约")
 @RestController
 @RequestMapping("/api/v1/reservations")
 public class ReservationController {
@@ -35,34 +41,34 @@ public class ReservationController {
         this.loadMonitoringService = loadMonitoringService;
     }
 
-    @Operation(summary = "رزرو نزدیک‌ترین زمان آزاد")
+    @Operation(summary = "预约最近的空闲时段")
     @PostMapping("/reserve")
     public ResponseEntity<ReservationResponseDto> reserveNearest(@RequestBody @Valid ReservationRequestDto request) {
         try {
-            // Increment active request counter
+            // 先计入当前正在处理的请求；计数是 shouldQueueRequest() 的判断依据。
             loadMonitoringService.incrementActiveRequests();
 
-            // Check if we should queue this request based on current system load
+            // 超过并发阈值时快速返回 requestId，让后台队列慢慢消化请求。
             if (loadMonitoringService.shouldQueueRequest()) {
-                // High load - use queue
+                // 高负载路径：写入 Redis，HTTP 202 表示“已接收但尚未处理完成”。
                 logger.info("Processing reservation request for {} through queue due to high load", request.getEmail());
                 String requestId = reservationQueueService.enqueueReservationRequest(request);
                 String status = reservationQueueService.getRequestStatus(requestId);
                 return ResponseEntity.accepted().body(new ReservationResponseDto(requestId, status));
             } else {
-                // Normal load - process directly
+                // 正常负载路径：在当前 HTTP 请求中完成选时段和数据库写入。
                 logger.info("Processing reservation request for {} directly", request.getEmail());
                 Reservation reservation = reservationService.reserveNearestSlot(request.getEmail());
                 String requestId = "direct-" + reservation.getId();
                 return ResponseEntity.ok().body(new ReservationResponseDto(requestId, "SUCCESS"));
             }
         } finally {
-            // Always decrement the counter when processing is complete
+            // 无论成功还是抛异常都必须归还计数，避免系统永久误判为高负载。
             loadMonitoringService.decrementActiveRequests();
         }
     }
 
-    @Operation(summary = "بررسی وضعیت درخواست رزرو با requestId")
+    @Operation(summary = "根据 requestId 查询排队请求状态")
     @GetMapping("/status/{requestId}")
     public ResponseEntity<ReservationResponseDto> getReservationStatus(@PathVariable String requestId) {
         String status = reservationQueueService.getRequestStatus(requestId);
@@ -72,7 +78,7 @@ public class ReservationController {
         return ResponseEntity.ok(new ReservationResponseDto(requestId, status));
     }
 
-    @Operation(summary = "لغو رزرو با ID")
+    @Operation(summary = "根据预约 ID 取消预约")
     @DeleteMapping("/cancel/{id}")
     public ResponseEntity<Void> cancelReservation(@PathVariable Long id) {
         reservationService.cancelReservation(id);

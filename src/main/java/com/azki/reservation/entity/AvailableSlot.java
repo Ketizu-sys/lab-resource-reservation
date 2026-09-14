@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "available_slot")
+/** 可供分配的时间段；isReserved 表示该时段是否已被占用。 */
 public class AvailableSlot extends Auditable implements Serializable {
     @Serial
     private static final long serialVersionUID = 1L;

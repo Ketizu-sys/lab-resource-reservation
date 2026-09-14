@@ -11,42 +11,35 @@ import org.springframework.util.StopWatch;
 import java.util.Arrays;
 
 /**
- * Aspect for logging execution of service and repository Spring components.
- * Logs method calls, parameters, execution time, and exceptions.
+ * 应用层通用日志切面。
+ * 统一记录 Controller、Service、Repository 的入参、返回值、异常和执行耗时，
+ * 从而避免在每个业务方法中重复编写相同的诊断代码。
  */
 @Aspect
 @Component
 public class LoggingAspect {
 
-    /**
-     * Pointcut that matches all repositories, services and controllers.
-     */
+    /** 匹配所有带 Repository、Service 或 RestController 注解的 Spring Bean。 */
     @Pointcut("within(@org.springframework.stereotype.Repository *)" +
             " || within(@org.springframework.stereotype.Service *)" +
             " || within(@org.springframework.web.bind.annotation.RestController *)")
     public void springBeanPointcut() {
-        // Method is empty as this is just a Pointcut, the implementations are in the advices.
+        // 切点方法只用于声明匹配范围，不需要方法体。
     }
 
-    /**
-     * Pointcut that matches all Spring beans in the application's main packages.
-     */
+    /** 匹配本项目包下的类型，并排除切面自身，避免日志切面递归拦截。 */
     @Pointcut("within(com.azki.reservation..*)" +
             " && !within(com.azki.reservation.aspect..*)")
     public void applicationPackagePointcut() {
-        // Method is empty as this is just a Pointcut, the implementations are in the advices.
+        // 切点的实际行为由下面的通知方法实现。
     }
 
-    /**
-     * Retrieves the appropriate logger for the given join point.
-     */
+    /** 使用被拦截类的名称创建 Logger，便于按业务类检索日志。 */
     private Logger logger(JoinPoint joinPoint) {
         return LoggerFactory.getLogger(joinPoint.getSignature().getDeclaringTypeName());
     }
 
-    /**
-     * Logs before method execution.
-     */
+    /** DEBUG 级别记录方法进入和参数。 */
     @Before("applicationPackagePointcut() && springBeanPointcut()")
     public void logBefore(JoinPoint joinPoint) {
         Logger log = logger(joinPoint);
@@ -58,9 +51,7 @@ public class LoggingAspect {
         }
     }
 
-    /**
-     * Logs after method execution, including return value.
-     */
+    /** DEBUG 级别记录正常返回的方法及结果。 */
     @AfterReturning(pointcut = "applicationPackagePointcut() && springBeanPointcut()", returning = "result")
     public void logAfterReturning(JoinPoint joinPoint, Object result) {
         Logger log = logger(joinPoint);
@@ -72,9 +63,7 @@ public class LoggingAspect {
         }
     }
 
-    /**
-     * Logs exceptions thrown by methods.
-     */
+    /** ERROR 级别记录异常摘要，DEBUG 级别追加完整堆栈。 */
     @AfterThrowing(pointcut = "applicationPackagePointcut() && springBeanPointcut()", throwing = "e")
     public void logAfterThrowing(JoinPoint joinPoint, Throwable e) {
         Logger log = logger(joinPoint);
@@ -89,7 +78,8 @@ public class LoggingAspect {
     }
 
     /**
-     * Logs method execution time.
+     * 环绕执行目标方法并统计耗时。
+     * TRACE 下记录全部调用；非 TRACE 时只把超过 500ms 的调用记为慢调用。
      */
     @Around("applicationPackagePointcut() && springBeanPointcut()")
     public Object logAround(ProceedingJoinPoint joinPoint) throws Throwable {
@@ -104,7 +94,8 @@ public class LoggingAspect {
         StopWatch stopWatch = new StopWatch();
         stopWatch.start();
 
-        Object result = null; // Initialize result to null before try block
+        // 提前初始化，确保 finally 中即使发生异常也能安全引用。
+        Object result = null;
 
         try {
             result = joinPoint.proceed();

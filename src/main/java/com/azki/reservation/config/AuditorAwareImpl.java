@@ -7,9 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-/**
- * Implementation of AuditorAware to provide the current auditor (user) for JPA auditing
- */
+/** 为 JPA 审计字段提供当前操作人，优先使用 SecurityContext 中的登录身份。 */
 @Component
 public class AuditorAwareImpl implements AuditorAware<String> {
 
@@ -18,7 +16,7 @@ public class AuditorAwareImpl implements AuditorAware<String> {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
         if (authentication == null || !authentication.isAuthenticated()) {
-            // Default value when no user is authenticated (for system operations)
+            // 定时任务、初始化等没有登录上下文的操作统一记为 system。
             return Optional.of("system");
         }
 

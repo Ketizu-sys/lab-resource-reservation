@@ -11,14 +11,14 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 
 /**
- * Configuration for API rate limiting using the token bucket algorithm.
- * This limits how many requests a client can make in a given time period.
+ * 基于令牌桶算法的 API 限流配置。
+ * 仅当 reservation.rate-limiting.enabled=true 时创建全局 Bucket。
  */
 @Configuration
 @ConditionalOnProperty(value = "reservation.rate-limiting.enabled", havingValue = "true", matchIfMissing = false)
 public class RateLimitConfig {
 
-    // Rate limit: 20 requests per minute with a capacity of 20 tokens
+    // 桶最多容纳 20 个令牌，每分钟平滑补充 20 个；一次请求消费一个令牌。
     private static final int CAPACITY = 20;
     private static final int TOKENS_PER_MINUTE = 20;
 

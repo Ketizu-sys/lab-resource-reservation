@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 
 @Configuration
 @EnableJpaAuditing(auditorAwareRef = "auditorAware")
+/** 开启 JPA 自动审计，并指定操作人解析器。 */
 public class JpaAuditingConfig {
 
     @Bean

@@ -1,9 +1,6 @@
 package com.azki.reservation.exception;
 
-/**
- * Exception thrown when a user attempts to make a duplicate reservation
- * (e.g., booking the same slot twice).
- */
+/** 用户重复入队或已经持有未来预约时抛出。 */
 public class DuplicateReservationException extends BusinessException {
     public DuplicateReservationException(String message) {
         super(message);

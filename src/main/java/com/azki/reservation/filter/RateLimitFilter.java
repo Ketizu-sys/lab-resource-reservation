@@ -14,8 +14,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Filter that applies rate limiting to API requests.
- * Currently, applies a global rate limit; could be extended to do per-client limiting.
+ * 预约接口限流过滤器。
+ * 当前所有调用者共用一个进程内 Bucket；后续可改为按用户或 IP 分桶。
  */
 @Component
 @Order(1)
@@ -31,19 +31,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        // Only apply rate limiting to reservation API endpoints
+        // 只限制预约接口，登录、Swagger、健康检查等请求直接放行。
         if (request.getRequestURI().startsWith("/api/reservations")) {
             if (bucket.tryConsume(1)) {
-                // Request allowed, continue chain
+                // 成功取得一个令牌，继续进入后续过滤器和控制器。
                 filterChain.doFilter(request, response);
             } else {
-                // Rate limit exceeded
+                // 令牌不足时立即返回 429，不再执行后续业务。
                 response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
                 response.getWriter().write("Rate limit exceeded. Please try again later.");
                 response.getWriter().flush();
             }
         } else {
-            // Not a rate-limited endpoint
+            // 不属于限流路径，原样传递。
             filterChain.doFilter(request, response);
         }
     }

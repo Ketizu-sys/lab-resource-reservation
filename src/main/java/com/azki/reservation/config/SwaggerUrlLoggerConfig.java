@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 
 @Configuration
 @Slf4j
+/** 应用启动后在日志中打印 Swagger UI 地址，方便开发人员快速打开接口文档。 */
 public class SwaggerUrlLoggerConfig {
 
     @Value("${server.port:8080}")
@@ -19,6 +20,7 @@ public class SwaggerUrlLoggerConfig {
 
     @EventListener(ApplicationStartedEvent.class)
     public void logSwaggerUiUrl() {
+        // 同时考虑自定义服务端口和 context-path。
         String baseUrl = "http://localhost:" + serverPort + contextPath;
         String swaggerUrl = baseUrl + "/swagger-ui/index.html";
 

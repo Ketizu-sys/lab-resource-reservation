@@ -21,8 +21,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Global exception handler that provides consistent error responses across the application.
- * Handles both application-specific and general exceptions with appropriate HTTP status codes.
+ * 全局异常处理器。
+ *
+ * <p>把控制器抛出的业务异常、基础设施异常和未知异常转换成统一的
+ * {@link ApiError} JSON 结构，并给出符合语义的 HTTP 状态码。</p>
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -106,6 +108,7 @@ public class GlobalExceptionHandler {
 
     private ResponseEntity<ApiError> buildErrorResponse(Exception ex, String message,
                                                        HttpStatus status, String path) {
+        // error 保留内部异常信息，message 放置更适合展示给调用方的说明。
         ApiError apiError = new ApiError(
             status.value(),
             ex.getMessage(),

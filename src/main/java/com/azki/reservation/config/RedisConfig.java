@@ -14,6 +14,10 @@ import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import java.time.Duration;
 
 @Configuration
+/**
+ * Redis 连接池和序列化配置。
+ * Key 使用纯字符串，Value 使用带类型信息的 Jackson JSON，供缓存、队列和状态存储共用。
+ */
 public class RedisConfig {
 
     @Value("${spring.data.redis.host:localhost}")
@@ -27,12 +31,14 @@ public class RedisConfig {
 
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
+        // 根据配置创建单机 Redis 连接；只有密码非空时才启用认证。
         RedisStandaloneConfiguration redisConfig = new RedisStandaloneConfiguration(redisHost, redisPort);
 
         if (redisPassword != null && !redisPassword.isEmpty()) {
             redisConfig.setPassword(redisPassword);
         }
 
+        // 限制连接池规模并在借出、归还和空闲期间检查连接有效性。
         GenericObjectPoolConfig poolConfig = new GenericObjectPoolConfig();
         poolConfig.setMaxTotal(10);
         poolConfig.setMaxIdle(5);
@@ -41,6 +47,7 @@ public class RedisConfig {
         poolConfig.setTestOnReturn(true);
         poolConfig.setTestWhileIdle(true);
 
+        // Redis 命令超过 2 秒未完成即超时，防止业务线程长期阻塞。
         LettucePoolingClientConfiguration lettucePoolConfig = LettucePoolingClientConfiguration.builder()
                 .commandTimeout(Duration.ofSeconds(2))
                 .shutdownTimeout(Duration.ZERO)
@@ -52,6 +59,7 @@ public class RedisConfig {
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
+        // 显式统一普通键值与 Hash 的序列化方式，避免读写双方格式不一致。
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
         template.setKeySerializer(new StringRedisSerializer());

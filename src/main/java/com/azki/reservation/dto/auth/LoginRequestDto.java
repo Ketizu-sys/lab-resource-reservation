@@ -4,9 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
-/**
- * Data Transfer Object for login requests
- */
+/** 登录请求参数，只负责传输与格式校验，不包含认证逻辑。 */
 @Data
 public class LoginRequestDto {
 

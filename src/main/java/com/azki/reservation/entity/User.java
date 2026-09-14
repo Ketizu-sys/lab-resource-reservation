@@ -8,6 +8,7 @@ import lombok.Setter;
 @Setter
 @Entity
 @Table(name = "users")
+/** 系统用户实体。邮箱既用于登录，也是预约业务识别用户的依据。 */
 public class User extends Auditable {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

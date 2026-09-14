@@ -7,9 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-/**
- * Data Transfer Object for login responses
- */
+/** 登录成功后的响应，包含 JWT、令牌类型、用户基本信息和过期时间。 */
 @Data
 @Builder
 @AllArgsConstructor

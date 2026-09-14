@@ -25,6 +25,12 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 @EntityListeners(AuditingEntityListener.class)
+/**
+ * 所有持久化实体共用的审计基类。
+ *
+ * <p>Spring Data JPA 在新增和更新实体时自动填写操作人、时间；
+ * version 由 Hibernate 维护，用于发现并发更新冲突。</p>
+ */
 public abstract class Auditable {
     @CreatedBy
     @Setter(AccessLevel.NONE)
@@ -60,11 +66,11 @@ public abstract class Auditable {
 
     @PrePersist
     protected void prePersist() {
-        // Do Not Remove
+        // 保留生命周期回调，实体首次持久化前由 JPA 调用。
     }
 
     @PreUpdate
     protected void preUpdate() {
-        // Do Not Remove
+        // 保留生命周期回调，实体更新前由 JPA 调用。
     }
 }

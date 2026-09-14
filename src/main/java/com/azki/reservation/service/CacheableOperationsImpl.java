@@ -15,8 +15,10 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Implementation of CacheableOperations interface to properly leverage Spring's caching.
- * This class separates cacheable operations from the main service logic.
+ * 最近空闲时段的缓存实现。
+ *
+ * <p>固定键 {@code single} 表示整个系统当前共用一个“最近时段”缓存项；
+ * 预约或取消改变时段状态后，必须调用 {@link #evictNextSlotCache()} 主动失效。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -28,6 +30,7 @@ public class CacheableOperationsImpl implements CacheableOperations {
     @Override
     @Cacheable(value = "nextSlot", key = "'single'")
     public Optional<AvailableSlot> findNextAvailableSlotCached(LocalDateTime now) {
+        // 只有缓存未命中时才会进入方法体并查询 PostgreSQL。
         logger.debug("Finding next available time slot (cached)");
         Optional<AvailableSlot> slot = timeSlotRepository.findNextAvailable(now);
         if (slot.isPresent()) {
@@ -41,6 +44,7 @@ public class CacheableOperationsImpl implements CacheableOperations {
     @Override
     @CacheEvict(value = "nextSlot", key = "'single'")
     public void evictNextSlotCache() {
+        // 方法体无需处理数据，真正的删除动作由 Spring Cache 拦截器完成。
         logger.debug("Evicting nextSlot cache");
     }
 }

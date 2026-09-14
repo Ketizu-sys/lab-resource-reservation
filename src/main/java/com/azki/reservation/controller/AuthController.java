@@ -25,7 +25,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@Tag(name = "Authentication", description = "APIs for user authentication")
+/**
+ * 用户认证接口。
+ *
+ * <p>当前只提供登录：校验数据库中的用户密码，成功后签发 JWT。</p>
+ */
+@Tag(name = "用户认证", description = "用户登录与身份令牌相关接口")
 public class AuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
@@ -33,12 +38,12 @@ public class AuthController {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
 
-    @Operation(summary = "User login", description = "Authenticates a user and provides a JWT token")
+    @Operation(summary = "用户登录", description = "校验邮箱和密码，成功后返回 JWT")
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Successful login",
-            content = @Content(schema = @Schema(implementation = LoginResponseDto.class))),
-        @ApiResponse(responseCode = "401", description = "Invalid credentials"),
-        @ApiResponse(responseCode = "400", description = "Invalid request")
+            @ApiResponse(responseCode = "200", description = "登录成功",
+                    content = @Content(schema = @Schema(implementation = LoginResponseDto.class))),
+            @ApiResponse(responseCode = "401", description = "邮箱或密码错误"),
+            @ApiResponse(responseCode = "400", description = "请求参数不合法")
     })
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequestDto loginRequest) {
@@ -47,10 +52,10 @@ public class AuthController {
         return userRepository.findByEmail(loginRequest.getEmail())
                 .filter(user -> passwordEncoder.matches(loginRequest.getPassword(), user.getPassword()))
                 .map(user -> {
-                    // Generate token
+                    // 以邮箱作为 JWT 的 subject，后续 JwtFilter 会从中还原用户身份。
                     String token = jwtUtil.generateToken(user.getEmail());
 
-                    // Create response with detailed information
+                    // 除令牌外一并返回用户信息和过期时间，方便客户端保存登录态。
                     LoginResponseDto response = LoginResponseDto.builder()
                             .token(token)
                             .tokenType("Bearer")
