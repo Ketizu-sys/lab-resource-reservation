@@ -23,7 +23,7 @@ PasswordConfig 创建 PasswordEncoder
     -> Spring 自动把同一个 Bean 注入 AuthController
 ```
 
-当前包包含 9 个 Java 文件：
+当前包包含 10 个 Java 文件：
 
 | 文件 | 核心作用 | 主要产物/行为 |
 |---|---|---|
@@ -34,6 +34,7 @@ PasswordConfig 创建 PasswordEncoder
 | `RateLimitConfig.java` | 配置令牌桶限流 | Bucket4j `Bucket` Bean |
 | `RedisConfig.java` | 配置 Redis 连接和序列化 | 连接工厂、`RedisTemplate` |
 | `ReservationQueueHealthIndicator.java` | 判断队列是否健康 | Actuator 自定义健康项 |
+| `SchedulingConfig.java` | 开启并集中控制后台定时任务 | 条件化启用 `@Scheduled` |
 | `SecurityConfig.java` | 配置 HTTP 安全规则 | `SecurityFilterChain` Bean |
 | `SwaggerUrlLoggerConfig.java` | 启动后打印接口文档地址 | 启动事件监听器 |
 
@@ -92,6 +93,7 @@ flowchart TD
     SCAN --> REDIS[RedisConfig]
     SCAN --> SECURITY[SecurityConfig]
     SCAN --> HEALTH[ReservationQueueHealthIndicator]
+    SCAN --> SCHEDULING[SchedulingConfig]
     SCAN --> SWAGGER[SwaggerUrlLoggerConfig]
 
     JPA --> AUDITOR[AuditorAware]
@@ -708,15 +710,40 @@ sequenceDiagram
 
 `application.yml` 把 Actuator 放在独立管理端口 8081。管理上下文与主应用安全链的匹配方式需要结合 Spring Boot 实际自动配置验证，不能仅凭 `/actuator/**` 没出现在本文件中就断言一定被主过滤链保护或放行。
 
-## 12. `SwaggerUrlLoggerConfig.java`
+## 12. `SchedulingConfig.java`
 
 ### 12.1 文件作用
+
+集中开启 Spring 的定时任务能力，使队列消费、预约过期清理和 Redis 状态清理方法上的 `@Scheduled` 真正生效。
+
+```java
+@Configuration
+@EnableScheduling
+@ConditionalOnProperty(
+    prefix = "reservation.scheduling",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = true
+)
+public class SchedulingConfig { }
+```
+
+- `@EnableScheduling`：让 Spring 扫描并注册所有 `@Scheduled` 方法；
+- `@ConditionalOnProperty`：提供统一开关 `reservation.scheduling.enabled`；
+- `matchIfMissing=true`：不写该配置时默认启用，保持生产和开发环境正常运行；
+- 测试配置显式设为 `false`，防止后台线程抢先消费集成测试放入 Redis 的消息。
+
+这项配置只决定定时任务是否运行，不改变各任务自己的执行间隔。队列轮询间隔由 `reservation.queue.poll-interval-ms` 控制，预约过期检查间隔由 `reservation.expiry.check-minutes` 控制。
+
+## 13. `SwaggerUrlLoggerConfig.java`
+
+### 13.1 文件作用
 
 应用启动完成后，把 Swagger UI 地址以醒目的方框打印到日志，方便开发者点击或复制。
 
 它不负责开启 Swagger。Swagger 功能来自 `pom.xml` 中的 Springdoc 依赖；这个类只负责打印地址。
 
-### 12.2 `@Slf4j`
+### 13.2 `@Slf4j`
 
 Lombok 在编译时自动生成：
 
@@ -726,7 +753,7 @@ private static final Logger log = LoggerFactory.getLogger(...);
 
 因此源码中虽然没有声明 `log` 字段，`log.info(...)` 仍然可以使用。
 
-### 12.3 地址配置
+### 13.3 地址配置
 
 ```java
 @Value("${server.port:8080}")
@@ -751,19 +778,19 @@ String swaggerUrl = baseUrl + "/swagger-ui/index.html";
 http://localhost:8080/swagger-ui/index.html
 ```
 
-### 12.4 `@EventListener(ApplicationStartedEvent.class)`
+### 13.4 `@EventListener(ApplicationStartedEvent.class)`
 
 这表示当 Spring Boot 发布 `ApplicationStartedEvent` 时调用 `logSwaggerUiUrl()`。
 
 该事件发生在应用上下文已刷新之后，但通常早于 `ApplicationReadyEvent`。它适合输出启动信息，不应用于执行耗时业务。
 
-### 12.5 注意事项
+### 13.5 注意事项
 
 - 地址固定写成 `localhost` 和 `http`，部署到服务器、HTTPS、网关或反向代理后，日志中的外部访问地址可能不正确；
 - 管理端口 8081 与此处无关，Swagger 使用业务端口 8080；
 - 打印成功不代表 Swagger 页面一定可访问，还取决于 Springdoc 是否成功加载以及安全/网络配置。
 
-## 13. 配置文件与配置类的对应关系
+## 14. 配置文件与配置类的对应关系
 
 当前 `application.yml` 中与这些类直接相关的配置如下：
 
@@ -796,12 +823,13 @@ management:
 | `management.server.port=8081` | Actuator 独立管理端口 |
 | `management.endpoints.web.exposure.include` | 决定可通过 HTTP 访问的管理端点 |
 | `reservation.rate-limiting.enabled` | `RateLimitConfig` 和 `RateLimitFilter`，当前未配置 |
+| `reservation.scheduling.enabled` | `SchedulingConfig`，未配置时默认启用 |
 | `server.port` | `SwaggerUrlLoggerConfig`，当前未配置所以默认 8080 |
 | `server.servlet.context-path` | `SwaggerUrlLoggerConfig`，当前默认空 |
 
 注意：`reservation.queue.batch-size` 和 `poll-interval-ms` 不由 config 包直接读取，而是由 `ReservationQueueService` 读取。
 
-## 14. 启动时的创建顺序如何理解
+## 15. 启动时的创建顺序如何理解
 
 Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 Bean。可以用下面的逻辑顺序理解：
 
@@ -818,7 +846,7 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 
 如果某个必需 Bean 创建失败，依赖它的 Bean 也无法创建，最终可能导致整个应用启动失败。例如 RedisTemplate Bean 定义本身通常不要求 Redis 当场可用，但后续实际执行 Redis 命令时会产生连接错误。
 
-## 15. 当前配置包的优点
+## 16. 当前配置包的优点
 
 - 配置职责划分较清晰，一个文件集中解决一类基础设施问题；
 - 业务代码依赖接口，如 `PasswordEncoder`、`MeterRegistry`，耦合较低；
@@ -828,7 +856,7 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 - 队列健康状态已经接入 Actuator，具备运维意识；
 - 审计字段能够自动填写，业务服务无需重复赋值。
 
-## 16. 建议优先关注的问题
+## 17. 建议优先关注的问题
 
 ### 高优先级
 
@@ -845,7 +873,7 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 4. Swagger 日志地址应支持代理协议、外部域名和 HTTPS；
 5. Redis 生产环境应考虑认证、TLS、Sentinel 或 Cluster。
 
-## 17. 推荐阅读顺序
+## 18. 推荐阅读顺序
 
 第一次阅读建议按依赖从简单到复杂：
 
@@ -854,11 +882,12 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 3. `AuditorAwareImpl` 与 `JpaAuditingConfig`：理解配置如何驱动实体审计；
 4. `RedisConfig`：理解外部基础设施和序列化；
 5. `RateLimitConfig`：理解条件装配；
-6. `SecurityConfig`：理解 HTTP 过滤链和路径授权；
-7. `ReservationQueueHealthIndicator`：理解业务状态如何接入 Actuator；
-8. `SwaggerUrlLoggerConfig`：理解 Spring Boot 生命周期事件。
+6. `SchedulingConfig`：理解条件化开启后台任务；
+7. `SecurityConfig`：理解 HTTP 过滤链和路径授权；
+8. `ReservationQueueHealthIndicator`：理解业务状态如何接入 Actuator；
+9. `SwaggerUrlLoggerConfig`：理解 Spring Boot 生命周期事件。
 
-## 18. 总结
+## 19. 总结
 
 可以把这个包理解成项目的“装配中心”：
 
@@ -867,6 +896,7 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 - Security 配置决定接口能否访问；
 - Redis 配置为缓存和异步队列提供基础连接；
 - RateLimit 配置控制流量入口；
+- Scheduling 配置统一控制后台定时任务；
 - Metrics 与 HealthIndicator 向监控系统暴露运行状态；
 - Swagger 日志配置改善开发体验。
 

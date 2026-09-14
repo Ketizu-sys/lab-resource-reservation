@@ -22,3 +22,8 @@ logging:
   level:
     org.springframework: INFO
     org.hibernate.SQL: INFO
+
+reservation:
+  # 集成测试直接控制队列消费时机，禁止后台定时线程抢先处理测试消息。
+  scheduling:
+    enabled: false

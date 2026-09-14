@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 预约过期清理服务。
@@ -45,7 +46,10 @@ public class ReservationExpiryService {
      * 周期性处理过期预约，默认每 15 分钟执行一次。
      * 整个批次位于一个事务中，但循环内会捕获单条记录的异常并继续处理后续记录。
      */
-    @Scheduled(fixedDelayString = "${reservation.expiry.check-minutes:15}000")
+    @Scheduled(
+        fixedDelayString = "${reservation.expiry.check-minutes:15}",
+        timeUnit = TimeUnit.MINUTES
+    )
     @Transactional
     public void processExpiredReservations() {
         logger.info("Starting expired reservations check");
