@@ -13,7 +13,6 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -42,7 +41,6 @@ class ReservationServiceTest {
 
     private MeterRegistry meterRegistry;
 
-    @InjectMocks
     private ReservationService reservationService;
 
     @BeforeEach
@@ -59,7 +57,7 @@ class ReservationServiceTest {
 
     @Test
     void shouldFindNextAvailableSlot() {
-        // Given
+        // 准备：构造一条未来空闲时段。
         LocalDateTime now = LocalDateTime.now();
         AvailableSlot availableSlot = new AvailableSlot();
         availableSlot.setId(1L);
@@ -67,13 +65,13 @@ class ReservationServiceTest {
         availableSlot.setEndTime(now.plusHours(2));
         availableSlot.setReserved(false);
 
-        when(timeSlotRepository.findNextAvailable(any(LocalDateTime.class)))
+        when(cacheableOperations.findNextAvailableSlotCached(any(LocalDateTime.class)))
                 .thenReturn(Optional.of(availableSlot));
 
-        // When
+        // 执行：查询最近空闲时段。
         Optional<AvailableSlot> result = reservationService.findNextAvailableSlotCached();
 
-        // Then
+        // 验证：返回预期时段。
         assertTrue(result.isPresent());
         assertEquals(availableSlot.getId(), result.get().getId());
         assertEquals(availableSlot.getStartTime(), result.get().getStartTime());
@@ -81,7 +79,7 @@ class ReservationServiceTest {
 
     @Test
     void shouldReserveNearestSlot() {
-        // Given
+        // 准备：用户存在、没有重复预约且有可分配时段。
         String email = "test@example.com";
         LocalDateTime now = LocalDateTime.now();
 
@@ -101,16 +99,16 @@ class ReservationServiceTest {
         reservation.setAvailableSlot(slot);
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
-        when(timeSlotRepository.findNextAvailable(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
+        when(cacheableOperations.findNextAvailableSlotCached(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
         when(timeSlotRepository.findById(slot.getId())).thenReturn(Optional.of(slot));
         when(timeSlotRepository.save(any(AvailableSlot.class))).thenReturn(slot);
         when(reservationRepository.save(any(Reservation.class))).thenReturn(reservation);
         when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
 
-        // When
+        // 执行：为用户创建预约。
         Reservation result = reservationService.reserveNearestSlot(email);
 
-        // Then
+        // 验证：时段和预约均被保存。
         assertNotNull(result);
         assertEquals(1L, result.getId());
         verify(timeSlotRepository).save(any(AvailableSlot.class));
@@ -119,7 +117,7 @@ class ReservationServiceTest {
 
     @Test
     void shouldThrowExceptionWhenUserAlreadyHasActiveReservation() {
-        // Given
+        // 准备：用户已经持有未来预约。
         String email = "test@example.com";
         User user = new User();
         user.setId(1L);
@@ -128,13 +126,13 @@ class ReservationServiceTest {
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
         when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(true);
 
-        // When/Then
+        // 执行并验证：应拒绝重复预约。
         assertThrows(DuplicateReservationException.class, () -> reservationService.reserveNearestSlot(email));
     }
 
     @Test
     void shouldThrowExceptionWhenNoSlotsAvailable() {
-        // Given
+        // 准备：用户存在，但没有任何可用时段。
         String email = "test@example.com";
         User user = new User();
         user.setId(1L);
@@ -142,15 +140,15 @@ class ReservationServiceTest {
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
         when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
-        when(timeSlotRepository.findNextAvailable(any(LocalDateTime.class))).thenReturn(Optional.empty());
+        when(cacheableOperations.findNextAvailableSlotCached(any(LocalDateTime.class))).thenReturn(Optional.empty());
 
-        // When/Then
+        // 执行并验证：应抛出无可用预约异常。
         assertThrows(ReservationNotAvailableException.class, () -> reservationService.reserveNearestSlot(email));
     }
 
     @Test
     void shouldCancelReservation() {
-        // Given
+        // 准备：构造一条已有预约及其已占用时段。
         Long reservationId = 1L;
         LocalDateTime now = LocalDateTime.now();
 
@@ -171,12 +169,13 @@ class ReservationServiceTest {
 
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
 
-        // When
+        // 执行：取消预约。
         reservationService.cancelReservation(reservationId);
 
-        // Then
+        // 验证：时段被释放，预约记录被删除。
         verify(timeSlotRepository).save(any(AvailableSlot.class));
         verify(reservationRepository).delete(any(Reservation.class));
+        verify(cacheableOperations).evictNextSlotCache();
         assertFalse(slot.isReserved());
     }
 }

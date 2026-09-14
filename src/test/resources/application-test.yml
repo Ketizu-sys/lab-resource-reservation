@@ -1,22 +1,24 @@
 spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/reservation_test
-    driver-class-name: org.postgresql.Driver
-    username: reservation_user
-    password: strongpassword
+  # 连接地址由 Testcontainers 在运行时动态注入。
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
+  # 表结构只由 Liquibase 创建；test context 不加载开发演示数据。
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.xml
+    contexts: test
+
+  cache:
+    type: redis
 
 logging:
+  # 默认保持简洁，需要排查 SQL 时可临时提高日志级别。
   level:
     org.springframework: INFO
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: INFO

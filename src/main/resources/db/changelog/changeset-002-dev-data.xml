@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+      开发环境演示数据修正：不改写已执行的旧 changeSet，避免破坏 Liquibase 校验和。
+      三个演示账号的密码统一为 password；时段在首次执行迁移时相对当前日期生成。
+    -->
+    <changeSet id="2-fix-development-demo-data" author="codex" context="dev">
+        <sql>
+        <![CDATA[
+            UPDATE users
+            SET password = '$2a$10$y.voNlH.YlxpEm2feoJ0D.u3AGQstPsP42VXag5uwNmOvSS5TWPCC'
+            WHERE email IN ('johndoe1@example.com', 'johndoe2@example.com', 'user125@example.com');
+
+            INSERT INTO available_slot (start_time, end_time, is_reserved, created_by, created_date, version)
+            SELECT CURRENT_DATE + INTERVAL '1 day' + hour_number * INTERVAL '1 hour',
+                   CURRENT_DATE + INTERVAL '1 day' + (hour_number + 1) * INTERVAL '1 hour',
+                   FALSE,
+                   'SYSTEM',
+                   CURRENT_TIMESTAMP,
+                   0
+            FROM generate_series(9, 20) AS hour_number;
+        ]]>
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>
