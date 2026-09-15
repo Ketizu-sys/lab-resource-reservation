@@ -3,6 +3,7 @@ package com.azki.reservation.config;
 import com.azki.reservation.service.ReservationQueueService;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,13 +15,24 @@ public class ReservationQueueHealthIndicator implements HealthIndicator {
 
     private final ReservationQueueService reservationQueueService;
 
-    // 队列健康阈值：主队列超过 50 警告、超过 100 故障；DLQ 超过 10 警告。
-    private static final int QUEUE_WARNING_THRESHOLD = 50;
-    private static final int QUEUE_CRITICAL_THRESHOLD = 100;
-    private static final int DLQ_WARNING_THRESHOLD = 10;
+    private final int queueWarningThreshold;
+    private final int queueCriticalThreshold;
+    private final int dlqWarningThreshold;
 
-    public ReservationQueueHealthIndicator(ReservationQueueService reservationQueueService) {
+    public ReservationQueueHealthIndicator(
+            ReservationQueueService reservationQueueService,
+            @Value("${reservation.health.queue-warning-threshold:50}") int queueWarningThreshold,
+            @Value("${reservation.health.queue-critical-threshold:100}") int queueCriticalThreshold,
+            @Value("${reservation.health.dlq-warning-threshold:10}") int dlqWarningThreshold) {
+        if (queueWarningThreshold < 0
+                || queueCriticalThreshold <= queueWarningThreshold
+                || dlqWarningThreshold < 0) {
+            throw new IllegalArgumentException("Reservation health thresholds are invalid");
+        }
         this.reservationQueueService = reservationQueueService;
+        this.queueWarningThreshold = queueWarningThreshold;
+        this.queueCriticalThreshold = queueCriticalThreshold;
+        this.dlqWarningThreshold = dlqWarningThreshold;
     }
 
     @Override
@@ -34,18 +46,18 @@ public class ReservationQueueHealthIndicator implements HealthIndicator {
             .withDetail("deadLetterQueueSize", dlqSize);
 
         // 主队列严重积压优先判定为 DOWN，其次是 WARNING。
-        if (queueSize > QUEUE_CRITICAL_THRESHOLD) {
+        if (queueSize > queueCriticalThreshold) {
             return builder.down()
                 .withDetail("error", "Queue size exceeds critical threshold")
                 .build();
-        } else if (queueSize > QUEUE_WARNING_THRESHOLD) {
+        } else if (queueSize > queueWarningThreshold) {
             return builder.status("WARNING")
                 .withDetail("warning", "Queue size exceeds warning threshold")
                 .build();
         }
 
         // 主队列正常时再检查不可自动恢复的死信数量。
-        if (dlqSize > DLQ_WARNING_THRESHOLD) {
+        if (dlqSize > dlqWarningThreshold) {
             return builder.status("WARNING")
                 .withDetail("warning", "Dead letter queue size exceeds threshold")
                 .build();

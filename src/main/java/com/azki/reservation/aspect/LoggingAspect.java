@@ -8,12 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StopWatch;
 
-import java.util.Arrays;
-
 /**
  * 应用层通用日志切面。
- * 统一记录 Controller、Service、Repository 的入参、返回值、异常和执行耗时，
- * 从而避免在每个业务方法中重复编写相同的诊断代码。
+ * 统一记录 Controller、Service、Repository 的异常和执行耗时。
+ * 不输出方法参数和返回值，避免密码、令牌等敏感字段进入普通日志。
  */
 @Aspect
 @Component
@@ -39,38 +37,14 @@ public class LoggingAspect {
         return LoggerFactory.getLogger(joinPoint.getSignature().getDeclaringTypeName());
     }
 
-    /** DEBUG 级别记录方法进入和参数。 */
-    @Before("applicationPackagePointcut() && springBeanPointcut()")
-    public void logBefore(JoinPoint joinPoint) {
-        Logger log = logger(joinPoint);
-        if (log.isDebugEnabled()) {
-            log.debug("Enter: {}.{}() with arguments = {}",
-                joinPoint.getSignature().getDeclaringTypeName(),
-                joinPoint.getSignature().getName(),
-                Arrays.toString(joinPoint.getArgs()));
-        }
-    }
-
-    /** DEBUG 级别记录正常返回的方法及结果。 */
-    @AfterReturning(pointcut = "applicationPackagePointcut() && springBeanPointcut()", returning = "result")
-    public void logAfterReturning(JoinPoint joinPoint, Object result) {
-        Logger log = logger(joinPoint);
-        if (log.isDebugEnabled()) {
-            log.debug("Exit: {}.{}() with result = {}",
-                joinPoint.getSignature().getDeclaringTypeName(),
-                joinPoint.getSignature().getName(),
-                result);
-        }
-    }
-
-    /** ERROR 级别记录异常摘要，DEBUG 级别追加完整堆栈。 */
+    /** ERROR 级别只记录异常类型，DEBUG 级别才追加完整堆栈。 */
     @AfterThrowing(pointcut = "applicationPackagePointcut() && springBeanPointcut()", throwing = "e")
     public void logAfterThrowing(JoinPoint joinPoint, Throwable e) {
         Logger log = logger(joinPoint);
-        log.error("Exception in {}.{}() with cause = '{}'",
+        log.error("Exception in {}.{}(): {}",
             joinPoint.getSignature().getDeclaringTypeName(),
             joinPoint.getSignature().getName(),
-            e.getCause() != null ? e.getCause() : "NULL");
+            e.getClass().getSimpleName());
 
         if (log.isDebugEnabled()) {
             log.debug("Exception details: ", e);
@@ -85,34 +59,22 @@ public class LoggingAspect {
     public Object logAround(ProceedingJoinPoint joinPoint) throws Throwable {
         Logger log = logger(joinPoint);
         if (log.isTraceEnabled()) {
-            log.trace("Enter: {}.{}() with arguments = {}",
+            log.trace("Enter: {}.{}()",
                 joinPoint.getSignature().getDeclaringTypeName(),
-                joinPoint.getSignature().getName(),
-                Arrays.toString(joinPoint.getArgs()));
+                joinPoint.getSignature().getName());
         }
 
         StopWatch stopWatch = new StopWatch();
         stopWatch.start();
 
-        // 提前初始化，确保 finally 中即使发生异常也能安全引用。
-        Object result = null;
-
         try {
-            result = joinPoint.proceed();
-            return result;
-        } catch (IllegalArgumentException e) {
-            log.error("Illegal argument: {} in {}.{}()",
-                Arrays.toString(joinPoint.getArgs()),
-                joinPoint.getSignature().getDeclaringTypeName(),
-                joinPoint.getSignature().getName());
-            throw e;
+            return joinPoint.proceed();
         } finally {
             stopWatch.stop();
             if (log.isTraceEnabled()) {
-                log.trace("Exit: {}.{}() with result = {} in {}ms",
+                log.trace("Exit: {}.{}() in {}ms",
                     joinPoint.getSignature().getDeclaringTypeName(),
                     joinPoint.getSignature().getName(),
-                    result,
                     stopWatch.getTotalTimeMillis());
             } else if (log.isInfoEnabled() && stopWatch.getTotalTimeMillis() > 500) {
                 log.info("Long execution time: {}.{}() took {}ms",

@@ -11,6 +11,7 @@ import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,7 @@ public class ReservationService {
     )
     @Transactional
     public Reservation reserveNearestSlot(String email) {
+        Timer.Sample processingSample = Timer.start(meterRegistry);
         logger.info("Attempting to reserve nearest slot for user: {}", email);
         try {
             User user = userRepository.findByEmail(email)
@@ -95,6 +97,8 @@ public class ReservationService {
             logger.error("Failed to create reservation for user: {}. Reason: {}", email, e.getMessage());
             meterRegistry.counter("reservation.failed").increment();
             throw e;
+        } finally {
+            processingSample.stop(meterRegistry.timer("reservation.processing.time"));
         }
     }
 
@@ -124,8 +128,14 @@ public class ReservationService {
      */
     protected Reservation attemptReservation(User user) {
         // 写流程直接从数据库领取并锁定一条候选记录，不能依赖可能过期的缓存值。
-        AvailableSlot freshSlot = timeSlotRepository.findNextAvailableForUpdate(LocalDateTime.now())
-                .orElseThrow(() -> new ReservationNotAvailableException("No available time slots"));
+        Timer.Sample selectionSample = Timer.start(meterRegistry);
+        AvailableSlot freshSlot;
+        try {
+            freshSlot = timeSlotRepository.findNextAvailableForUpdate(LocalDateTime.now())
+                    .orElseThrow(() -> new ReservationNotAvailableException("No available time slots"));
+        } finally {
+            selectionSample.stop(meterRegistry.timer("reservation.slot.selection.time"));
+        }
 
         freshSlot.setReserved(true);
         // 保存时 Hibernate 会校验 Auditable.version，避免静默覆盖其他事务的更新。

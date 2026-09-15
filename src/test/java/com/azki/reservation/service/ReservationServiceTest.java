@@ -113,6 +113,8 @@ class ReservationServiceTest {
         verify(timeSlotRepository).save(any(AvailableSlot.class));
         verify(reservationRepository).saveAndFlush(any(Reservation.class));
         verify(cacheableOperations, never()).findNextAvailableSlotCached(any(LocalDateTime.class));
+        assertEquals(1, meterRegistry.timer("reservation.processing.time").count());
+        assertEquals(1, meterRegistry.timer("reservation.slot.selection.time").count());
     }
 
     @Test
@@ -144,6 +146,8 @@ class ReservationServiceTest {
 
         // 执行并验证：应抛出无可用预约异常。
         assertThrows(ReservationNotAvailableException.class, () -> reservationService.reserveNearestSlot(email));
+        assertEquals(1, meterRegistry.timer("reservation.processing.time").count());
+        assertEquals(1, meterRegistry.timer("reservation.slot.selection.time").count());
     }
 
     @Test

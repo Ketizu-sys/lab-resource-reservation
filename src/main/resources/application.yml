@@ -45,6 +45,11 @@ reservation:
     refill-tokens: 20
     refill-period: 1m
     max-tracked-clients: 10000
+  # Actuator 根据主队列和死信队列积压量报告健康状态。
+  health:
+    queue-warning-threshold: 50
+    queue-critical-threshold: 100
+    dlq-warning-threshold: 10
 management:
   # Actuator 使用独立端口，避免和业务 API 共用暴露面。
   server:
