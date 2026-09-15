@@ -9,6 +9,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -33,7 +34,7 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
     private TimeSlotRepository timeSlotRepository;
 
     @Test
-    void findNextAvailable_shouldReturnNextUnreservedSlotAfterGivenTime() {
+    void findNextAvailableForUpdate_shouldReturnAndLockOnlyNearestUnreservedSlot() {
         // 准备：构造一个已占用时段和两个空闲时段。
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime slotTime1 = now.plusHours(1);
@@ -65,7 +66,7 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
 
         // 执行：查询离当前时间最近的空闲时段。
-        Optional<AvailableSlot> result = timeSlotRepository.findNextAvailable(now);
+        Optional<AvailableSlot> result = timeSlotRepository.findNextAvailableForUpdate(now);
 
         // 验证：返回 slot2，且它仍是未预约状态。
         assertTrue(result.isPresent());
@@ -94,9 +95,23 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
 
         // 执行：查询最近空闲时段。
-        Optional<AvailableSlot> result = timeSlotRepository.findNextAvailable(now);
+        Optional<AvailableSlot> result = timeSlotRepository
+            .findFirstByIsReservedFalseAndStartTimeGreaterThanEqualOrderByStartTimeAsc(now);
 
         // 验证：没有候选项时返回空 Optional。
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void databaseShouldRejectSlotWhoseEndIsNotAfterStart() {
+        LocalDateTime start = LocalDateTime.now().plusHours(1);
+        AvailableSlot invalid = new AvailableSlot();
+        invalid.setStartTime(start);
+        invalid.setEndTime(start);
+        invalid.setReserved(false);
+
+        assertThrows(DataIntegrityViolationException.class, () -> {
+            timeSlotRepository.saveAndFlush(invalid);
+        });
     }
 }

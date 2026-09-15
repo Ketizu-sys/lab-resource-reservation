@@ -8,5 +8,6 @@
     <!-- 主变更日志只负责按顺序组织各版本的具体变更集。 -->
     <include file="/db/changelog/changeset-001.xml"/>
     <include file="/db/changelog/changeset-002-dev-data.xml"/>
+    <include file="/db/changelog/changeset-003-concurrency-constraints.xml"/>
 
 </databaseChangeLog>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 数据库作为并发预约的最终防线；当前模型只保留有效预约，因此 user_id 可唯一。 -->
+    <changeSet id="3-reservation-concurrency-constraints" author="Hu">
+        <addUniqueConstraint
+                tableName="reservation"
+                columnNames="user_id"
+                constraintName="uk_reservation_active_user"/>
+
+        <!-- PostgreSQL 部分索引只覆盖空闲时段，服务于最近空闲时段查询。 -->
+        <sql>
+            CREATE INDEX idx_available_slot_unreserved_start
+            ON available_slot (start_time)
+            WHERE is_reserved = false;
+        </sql>
+
+        <sql>
+            ALTER TABLE available_slot
+            ADD CONSTRAINT chk_available_slot_time_order
+            CHECK (end_time &gt; start_time);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

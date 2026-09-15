@@ -99,10 +99,9 @@ class ReservationServiceTest {
         reservation.setAvailableSlot(slot);
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
-        when(cacheableOperations.findNextAvailableSlotCached(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
-        when(timeSlotRepository.findById(slot.getId())).thenReturn(Optional.of(slot));
+        when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
         when(timeSlotRepository.save(any(AvailableSlot.class))).thenReturn(slot);
-        when(reservationRepository.save(any(Reservation.class))).thenReturn(reservation);
+        when(reservationRepository.saveAndFlush(any(Reservation.class))).thenReturn(reservation);
         when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
 
         // 执行：为用户创建预约。
@@ -112,7 +111,8 @@ class ReservationServiceTest {
         assertNotNull(result);
         assertEquals(1L, result.getId());
         verify(timeSlotRepository).save(any(AvailableSlot.class));
-        verify(reservationRepository).save(any(Reservation.class));
+        verify(reservationRepository).saveAndFlush(any(Reservation.class));
+        verify(cacheableOperations, never()).findNextAvailableSlotCached(any(LocalDateTime.class));
     }
 
     @Test
@@ -140,7 +140,7 @@ class ReservationServiceTest {
 
         when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
         when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
-        when(cacheableOperations.findNextAvailableSlotCached(any(LocalDateTime.class))).thenReturn(Optional.empty());
+        when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.empty());
 
         // 执行并验证：应抛出无可用预约异常。
         assertThrows(ReservationNotAvailableException.class, () -> reservationService.reserveNearestSlot(email));

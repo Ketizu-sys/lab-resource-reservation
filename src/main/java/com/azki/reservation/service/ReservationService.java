@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.retry.annotation.Recover;
@@ -63,7 +64,8 @@ public class ReservationService {
      * @throws BusinessException 用户不存在、已有未来预约或没有可用时段时抛出
      */
     @Retryable(
-        value = OptimisticLockingFailureException.class,
+        retryFor = OptimisticLockingFailureException.class,
+        notRecoverable = BusinessException.class,
         maxAttempts = 3,
         backoff = @Backoff(delay = 10, multiplier = 1.5)
     )
@@ -117,23 +119,13 @@ public class ReservationService {
      *
      * @param user 发起预约的持久化用户
      * @return 新建并保存的预约
-     * @throws ReservationNotAvailableException 没有候选时段或候选时段已被占用
+     * @throws ReservationNotAvailableException 没有候选时段
      * @throws OptimisticLockingFailureException 保存期间发现实体版本冲突
      */
-    @Transactional(noRollbackFor = OptimisticLockingFailureException.class)
     protected Reservation attemptReservation(User user) {
-        AvailableSlot slot = findNextAvailableSlotCached()
+        // 写流程直接从数据库领取并锁定一条候选记录，不能依赖可能过期的缓存值。
+        AvailableSlot freshSlot = timeSlotRepository.findNextAvailableForUpdate(LocalDateTime.now())
                 .orElseThrow(() -> new ReservationNotAvailableException("No available time slots"));
-
-        // 缓存中的时段可能已经过期，因此按 ID 重新读取数据库中的最新状态。
-        AvailableSlot freshSlot = timeSlotRepository.findById(slot.getId())
-                .orElseThrow(() -> new ReservationNotAvailableException("Time slot no longer exists"));
-
-        if (freshSlot.isReserved()) {
-            logger.warn("Concurrency issue: Slot {} is already reserved in database.", freshSlot.getId());
-            evictNextSlotCache();
-            throw new ReservationNotAvailableException("Time slot already reserved");
-        }
 
         freshSlot.setReserved(true);
         // 保存时 Hibernate 会校验 Auditable.version，避免静默覆盖其他事务的更新。
@@ -147,9 +139,16 @@ public class ReservationService {
         reservation.setAvailableSlot(savedSlot);
         reservation.setReservedAt(LocalDateTime.now());
 
-        Reservation saved = reservationRepository.save(reservation);
-        logger.info("Reservation {} created for user {} at slot {}", saved.getId(), user.getEmail(), savedSlot.getId());
-        return saved;
+        try {
+            // 立即 flush，让用户/时段唯一约束异常在本方法内出现并转换为业务异常。
+            Reservation saved = reservationRepository.saveAndFlush(reservation);
+            logger.info("Reservation {} created for user {} at slot {}",
+                saved.getId(), user.getEmail(), savedSlot.getId());
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            logger.warn("Database rejected duplicate reservation for user {}", user.getEmail());
+            throw new DuplicateReservationException("User or time slot already has an active reservation");
+        }
     }
 
     /**
