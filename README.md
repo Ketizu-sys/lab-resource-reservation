@@ -160,11 +160,20 @@ git clone https://github.com/HoomanDevp/reservation.git
 cd reservation
 ```
 
-Start PostgreSQL and Redis using the repository's container configuration where applicable:
+Copy the environment template and replace both example secrets before starting the containers:
+
+```bash
+cp .env.example .env
+```
+
+Then start the complete application stack:
 
 ```bash
 docker compose up -d
 ```
+
+For a local IDE launch, set `DB_PASSWORD` and `JWT_SECRET` in the run
+configuration. The JWT secret must contain at least 32 UTF-8 bytes.
 
 Build the project:
 

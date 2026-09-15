@@ -1,19 +1,24 @@
 spring:
+  # 应用名称会出现在日志、指标和 Spring 管理信息中。
   application:
     name: reservation
+  # PostgreSQL 主数据源：保存用户、可用时段和最终预约记录。
   datasource:
-    driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://localhost:5432/reservationdb
-    username: azki
-    password: azki!p@ss
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
+  # Redis 同时承载缓存、请求队列、请求状态和邮箱去重集合。
   data:
     redis:
       host: localhost
       port: 6379
+  # 默认启用开发环境配置；生产部署建议通过环境变量覆盖。
   profiles:
     active: dev
+  # 告诉 Spring Cache 使用 Redis 作为缓存实现。
   cache:
     type: redis
+  # Hibernate 只校验表结构，不自动建表；建表职责交给 Liquibase。
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,6 +26,7 @@ spring:
       hibernate:
         format_sql: true
 
+  # 数据库版本迁移配置。
   liquibase:
     contexts: ${spring.profiles.active}
     database-change-log-table: Z_LIQ_CHANGELOG
@@ -28,12 +34,15 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.xml
     enabled: true
 reservation:
+  # 高负载模式下的 Redis 队列批处理参数。
   queue:
     batch-size: 50
     poll-interval-ms: 10
 management:
+  # Actuator 使用独立端口，避免和业务 API 共用暴露面。
   server:
     port: 8081
+  # 暴露健康、基本信息、指标和 Prometheus 抓取端点。
   endpoints:
     web:
       exposure:
