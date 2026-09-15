@@ -145,11 +145,11 @@ reservation:
   rate-limiting:
     enabled: true
   expiry:
-    hours: 24
     check-minutes: 15
 ```
 
-Adjust these values for the deployment environment and expected workload.
+Reservations are expired after their associated slot's `endTime`. Adjust the
+remaining values for the deployment environment and expected workload.
 
 ## Getting Started
 

@@ -6,7 +6,6 @@ import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,8 +17,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 预约过期清理服务。
  *
- * <p>定期找出创建时间早于阈值的预约，释放其时段并删除预约记录。
- * 当前“过期”按 createdDate 判断，而不是按时段开始或结束时间判断。</p>
+ * <p>定期找出关联时段已经结束的预约，释放其时段并删除预约记录。
+ * 过期时间以时段的 endTime 为准，因此提前创建的未来预约不会被误删。</p>
  */
 @Service
 public class ReservationExpiryService {
@@ -29,9 +28,6 @@ public class ReservationExpiryService {
     private final ReservationRepository reservationRepository;
     private final TimeSlotRepository timeSlotRepository;
     private final CacheableOperations cacheableOperations;
-
-    @Value("${reservation.expiry.hours:24}")
-    private int expiryHours;
 
     public ReservationExpiryService(
             ReservationRepository reservationRepository,
@@ -54,9 +50,9 @@ public class ReservationExpiryService {
     public void processExpiredReservations() {
         logger.info("Starting expired reservations check");
 
-        LocalDateTime expirationThreshold = LocalDateTime.now().minusHours(expiryHours);
+        LocalDateTime now = LocalDateTime.now();
         List<Reservation> expiredReservations =
-            reservationRepository.findExpiredReservations(expirationThreshold);
+            reservationRepository.findExpiredReservations(now);
 
         if (expiredReservations.isEmpty()) {
             logger.info("No expired reservations found");
