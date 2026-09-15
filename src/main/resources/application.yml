@@ -38,6 +38,13 @@ reservation:
   queue:
     batch-size: 50
     poll-interval-ms: 10
+  # 预约与登录接口按客户端 IP 分桶限流。
+  rate-limiting:
+    enabled: true
+    capacity: 20
+    refill-tokens: 20
+    refill-period: 1m
+    max-tracked-clients: 10000
 management:
   # Actuator 使用独立端口，避免和业务 API 共用暴露面。
   server:

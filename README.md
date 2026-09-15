@@ -144,6 +144,10 @@ reservation:
     expiry-hours: 24
   rate-limiting:
     enabled: true
+    capacity: 20
+    refill-tokens: 20
+    refill-period: 1m
+    max-tracked-clients: 10000
   expiry:
     check-minutes: 15
 ```
