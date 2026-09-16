@@ -64,6 +64,6 @@ class ReservationExpiryServiceTest {
         assertNotNull(reservation.getCompletedAt());
         assertEquals(true, slot.isReserved());
         verify(reservationRepository).save(reservation);
-        verify(reservationRepository, never()).delete(any());
+        verify(reservationRepository, never()).delete(any(Reservation.class));
     }
 }

@@ -185,7 +185,7 @@ class ReservationServiceTest {
         reservation.setAvailableSlot(slot);
         reservation.setStatus(ReservationStatus.ACTIVE);
 
-        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(reservation));
 
         // 执行：取消预约。
         reservationService.cancelReservation(reservationId, user.getId());
@@ -204,7 +204,7 @@ class ReservationServiceTest {
     @Test
     void shouldRejectCancellationWhenReservationIsNotActive() {
         Reservation reservation = reservationWithStatus(ReservationStatus.COMPLETED, LocalDateTime.now().plusHours(1));
-        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(reservation));
 
         assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L, 1L));
 
@@ -215,7 +215,7 @@ class ReservationServiceTest {
     @Test
     void shouldRejectCancellationAfterSlotHasStarted() {
         Reservation reservation = reservationWithStatus(ReservationStatus.ACTIVE, LocalDateTime.now().minusMinutes(1));
-        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(reservation));
 
         assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L, 1L));
 
@@ -226,7 +226,7 @@ class ReservationServiceTest {
     @Test
     void shouldRejectCancellationOwnedByAnotherUser() {
         Reservation reservation = reservationWithStatus(ReservationStatus.ACTIVE, LocalDateTime.now().plusHours(1));
-        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(reservation));
 
         assertThrows(AccessDeniedException.class, () -> reservationService.cancelReservation(1L, 99L));
 

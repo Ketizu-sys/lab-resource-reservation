@@ -8,11 +8,14 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
-public interface ReservationRepository extends JpaRepository<Reservation, Long> {
+public interface ReservationRepository extends JpaRepository<Reservation, Long>, JpaSpecificationExecutor<Reservation> {
 
     @EntityGraph(attributePaths = {"availableSlot", "availableSlot.resource"})
     Page<Reservation> findByUserIdOrderByReservedAtDesc(Long userId, Pageable pageable);
@@ -24,6 +27,11 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     @EntityGraph(attributePaths = {"user", "availableSlot", "availableSlot.resource"})
     @Query("SELECT r FROM Reservation r WHERE r.id = :id")
     java.util.Optional<Reservation> findDetailedById(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @EntityGraph(attributePaths = {"user", "availableSlot", "availableSlot.resource"})
+    @Query("SELECT r FROM Reservation r WHERE r.id = :id")
+    java.util.Optional<Reservation> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * 判断用户是否存在与候选时段重叠的有效预约。

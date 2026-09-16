@@ -213,13 +213,26 @@ public class ReservationService {
     @Transactional
     public void cancelReservation(Long id, Long currentUserId) {
         logger.info("Attempting to cancel reservation with id: {}", id);
-        Reservation reservation = reservationRepository.findById(id)
+        Reservation reservation = reservationRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ReservationNotFoundException("Reservation not found for id: " + id));
 
         if (!reservation.getUser().getId().equals(currentUserId)) {
             throw new AccessDeniedException("Reservation does not belong to current user");
         }
 
+        cancelActiveReservation(reservation, "Cancelled by user");
+    }
+
+    /** 管理员取消预约，不受所有权限制，但遵守相同生命周期规则。 */
+    @Transactional
+    public void cancelReservationAsAdmin(Long id) {
+        Reservation reservation = reservationRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ReservationNotFoundException("Reservation not found for id: " + id));
+        cancelActiveReservation(reservation, "Cancelled by administrator");
+    }
+
+    private void cancelActiveReservation(Reservation reservation, String reason) {
+        Long id = reservation.getId();
         if (reservation.getStatus() != ReservationStatus.ACTIVE) {
             throw new BusinessException("Only active reservations can be cancelled");
         }
@@ -236,7 +249,7 @@ public class ReservationService {
 
         reservation.setStatus(ReservationStatus.CANCELLED);
         reservation.setCancelledAt(now);
-        reservation.setCancelReason("Cancelled by user");
+        reservation.setCancelReason(reason);
         reservationRepository.saveAndFlush(reservation);
         logger.info("Reservation {} cancelled", id);
 
