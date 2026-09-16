@@ -1,6 +1,9 @@
 package com.azki.reservation.repository;
 
 import com.azki.reservation.entity.AvailableSlot;
+import com.azki.reservation.entity.Resource;
+import com.azki.reservation.entity.ResourceStatus;
+import com.azki.reservation.entity.ResourceType;
 import com.azki.reservation.config.JpaAuditingConfig;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
 import org.junit.jupiter.api.Test;
@@ -40,24 +43,28 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
         LocalDateTime slotTime1 = now.plusHours(1);
         LocalDateTime slotTime2 = now.plusHours(2);
         LocalDateTime slotTime3 = now.plusHours(3);
+        Resource resource = createResource("nearest-resource");
 
         // 最早的时段已被占用，应被查询跳过。
         AvailableSlot slot1 = new AvailableSlot();
         slot1.setStartTime(slotTime1);
         slot1.setEndTime(slotTime1.plusHours(1));
         slot1.setReserved(true);
+        slot1.setResource(resource);
 
         // 第一条空闲时段，应作为结果返回。
         AvailableSlot slot2 = new AvailableSlot();
         slot2.setStartTime(slotTime2);
         slot2.setEndTime(slotTime2.plusHours(1));
         slot2.setReserved(false);
+        slot2.setResource(resource);
 
         // 更晚的空闲时段，不应优先于 slot2。
         AvailableSlot slot3 = new AvailableSlot();
         slot3.setStartTime(slotTime3);
         slot3.setEndTime(slotTime3.plusHours(1));
         slot3.setReserved(false);
+        slot3.setResource(resource);
 
         // 持久化并刷新，使查询直接读取数据库状态。
         entityManager.persist(slot1);
@@ -78,17 +85,20 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
     void findNextAvailable_shouldReturnEmptyWhenNoUnreservedSlotsAvailable() {
         // 准备：所有未来时段均已被占用。
         LocalDateTime now = LocalDateTime.now();
+        Resource resource = createResource("occupied-resource");
 
         // 两条时段都不可用。
         AvailableSlot slot1 = new AvailableSlot();
         slot1.setStartTime(now.plusHours(1));
         slot1.setEndTime(now.plusHours(2));
         slot1.setReserved(true);
+        slot1.setResource(resource);
 
         AvailableSlot slot2 = new AvailableSlot();
         slot2.setStartTime(now.plusHours(2));
         slot2.setEndTime(now.plusHours(3));
         slot2.setReserved(true);
+        slot2.setResource(resource);
 
         entityManager.persist(slot1);
         entityManager.persist(slot2);
@@ -105,13 +115,25 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
     @Test
     void databaseShouldRejectSlotWhoseEndIsNotAfterStart() {
         LocalDateTime start = LocalDateTime.now().plusHours(1);
+        Resource resource = createResource("invalid-time-resource");
         AvailableSlot invalid = new AvailableSlot();
         invalid.setStartTime(start);
         invalid.setEndTime(start);
         invalid.setReserved(false);
+        invalid.setResource(resource);
 
         assertThrows(DataIntegrityViolationException.class, () -> {
             timeSlotRepository.saveAndFlush(invalid);
         });
+    }
+
+    private Resource createResource(String name) {
+        Resource resource = new Resource();
+        resource.setName(name);
+        resource.setType(ResourceType.LAB);
+        resource.setLocation("test-location");
+        resource.setStatus(ResourceStatus.ACTIVE);
+        resource.setCapacity(1);
+        return entityManager.persist(resource);
     }
 }

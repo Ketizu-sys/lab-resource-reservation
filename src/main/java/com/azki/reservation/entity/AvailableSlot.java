@@ -27,6 +27,11 @@ public class AvailableSlot extends Auditable implements Serializable {
     @Column(name = "end_time", nullable = false)
     private LocalDateTime endTime;
 
+    /** 每个时段必须归属一个资源；资源删除受数据库外键保护。 */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "resource_id", nullable = false)
+    private Resource resource;
+
     @Column(name = "is_reserved", nullable = false)
     private boolean isReserved = false;
 }

@@ -9,5 +9,6 @@
     <include file="/db/changelog/changeset-001.xml"/>
     <include file="/db/changelog/changeset-002-dev-data.xml"/>
     <include file="/db/changelog/changeset-003-concurrency-constraints.xml"/>
+    <include file="/db/changelog/changeset-004-resource-domain.xml"/>
 
 </databaseChangeLog>

@@ -2,8 +2,12 @@ package com.azki.reservation.service;
 
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.User;
+import com.azki.reservation.entity.Resource;
+import com.azki.reservation.entity.ResourceStatus;
+import com.azki.reservation.entity.ResourceType;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.repository.ReservationRepository;
+import com.azki.reservation.repository.ResourceRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
@@ -42,6 +46,9 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
     @Autowired
     private ReservationRepository reservationRepository;
 
+    @Autowired
+    private ResourceRepository resourceRepository;
+
     @Test
     void concurrentRequestsForSameUserShouldCreateOnlyOneReservation() throws Exception {
         String email = "concurrent-user@example.com";
@@ -52,8 +59,9 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         userRepository.saveAndFlush(user);
 
         LocalDateTime firstStart = LocalDateTime.now().plusHours(1);
-        AvailableSlot first = slot(firstStart);
-        AvailableSlot second = slot(firstStart.plusHours(1));
+        Resource resource = resourceRepository.saveAndFlush(resource());
+        AvailableSlot first = slot(firstStart, resource);
+        AvailableSlot second = slot(firstStart.plusHours(1), resource);
         timeSlotRepository.saveAllAndFlush(List.of(first, second));
 
         CountDownLatch start = new CountDownLatch(1);
@@ -81,11 +89,22 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         }
     }
 
-    private AvailableSlot slot(LocalDateTime start) {
+    private AvailableSlot slot(LocalDateTime start, Resource resource) {
         AvailableSlot slot = new AvailableSlot();
         slot.setStartTime(start);
         slot.setEndTime(start.plusMinutes(45));
         slot.setReserved(false);
+        slot.setResource(resource);
         return slot;
+    }
+
+    private Resource resource() {
+        Resource resource = new Resource();
+        resource.setName("concurrency-resource");
+        resource.setType(ResourceType.LAB);
+        resource.setLocation("test-location");
+        resource.setStatus(ResourceStatus.ACTIVE);
+        resource.setCapacity(1);
+        return resource;
     }
 }

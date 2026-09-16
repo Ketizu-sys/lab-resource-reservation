@@ -2,6 +2,9 @@ package com.azki.reservation.repository;
 
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.Reservation;
+import com.azki.reservation.entity.Resource;
+import com.azki.reservation.entity.ResourceStatus;
+import com.azki.reservation.entity.ResourceType;
 import com.azki.reservation.entity.User;
 import com.azki.reservation.config.JpaAuditingConfig;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
@@ -40,6 +43,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         String email = "test@azki.com";
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime futureTime = now.plusHours(2);
+        Resource resource = createResource("future-reservation-resource");
 
         // 创建预约用户。
         User user = new User();
@@ -53,6 +57,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         slot.setStartTime(futureTime);
         slot.setEndTime(futureTime.plusHours(1));
         slot.setReserved(true);
+        slot.setResource(resource);
         entityManager.persist(slot);
 
         // 建立用户与时段之间的预约关系。
@@ -77,6 +82,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         String email = "test@example.com";
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime pastTime = now.minusHours(2);
+        Resource resource = createResource("past-reservation-resource");
 
         // 创建预约用户。
         User user = new User();
@@ -90,6 +96,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         slot.setStartTime(pastTime);
         slot.setEndTime(pastTime.plusHours(1));
         slot.setReserved(true);
+        slot.setResource(resource);
         entityManager.persist(slot);
 
         // 建立历史预约记录。
@@ -143,7 +150,18 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         slot.setStartTime(startTime);
         slot.setEndTime(endTime);
         slot.setReserved(true);
+        slot.setResource(createResource("resource-" + startTime));
         return entityManager.persist(slot);
+    }
+
+    private Resource createResource(String name) {
+        Resource resource = new Resource();
+        resource.setName(name);
+        resource.setType(ResourceType.LAB);
+        resource.setLocation("test-location");
+        resource.setStatus(ResourceStatus.ACTIVE);
+        resource.setCapacity(1);
+        return entityManager.persist(resource);
     }
 
     private Reservation createReservation(User user, AvailableSlot slot, LocalDateTime reservedAt) {
