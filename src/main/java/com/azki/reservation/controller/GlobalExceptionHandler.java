@@ -5,6 +5,7 @@ import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
+import com.azki.reservation.exception.ResourceNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,12 @@ public class GlobalExceptionHandler {
         logger.warn("Business rule violation: {}", ex.getMessage());
         return buildErrorResponse(ex, ex.getMessage(),
                 HttpStatus.BAD_REQUEST, request.getRequestURI());
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ResponseEntity<ApiError> handleResourceNotFound(ResourceNotFoundException ex, HttpServletRequest request) {
+        return buildErrorResponse(ex, ex.getMessage(), HttpStatus.NOT_FOUND, request.getRequestURI());
     }
 
     @ExceptionHandler(AccessDeniedException.class)
