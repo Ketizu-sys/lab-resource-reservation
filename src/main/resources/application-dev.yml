@@ -1,23 +1,28 @@
 spring:
+  # 开发环境数据库连接；可通过 SPRING_DATASOURCE_* 环境变量覆盖。
   datasource:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://localhost:5432/reservationdb
-    username: azki
-    password: azki!p@ss
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
+
+  # 开发阶段输出 SQL，便于观察 Repository 实际执行的查询。
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:
         format_sql: true
 
+  # 开发环境默认连接本机 Redis。
   data:
     redis:
       host: localhost
       port: 6379
 
 logging:
+  # 开发环境日志级别，业务包和 Hibernate SQL 当前均为 INFO。
   level:
     root: info
     com.azki.reservation: info

@@ -4,24 +4,41 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
 
 @Component
-/** JWT 的生成、解析和签名校验工具。当前使用 HMAC 对称密钥。 */
+/** JWT 的生成、解析和签名校验工具，使用由部署环境提供的 HMAC 对称密钥。 */
 public class JwtUtil {
 
-    // HMAC 签名密钥。当前硬编码仅适合演示，部署时应从安全配置注入。
-    private static final String secret = "mysecretkey12345678901234567890";
-    // 令牌有效期：86,400,000 毫秒，即 1 天。
-    private static final long expiration = 86400000;
+    private final String secret;
+    private final long expiration;
+
+    /**
+     * JWT 密钥优先读取 JWT_SECRET 环境变量，也允许测试通过 security.jwt.secret 注入。
+     * HS256 要求至少 256 位密钥；启动时立即校验可以避免使用弱密钥运行。
+     */
+    public JwtUtil(
+            @Value("${JWT_SECRET:${security.jwt.secret:}}") String secret,
+            @Value("${JWT_EXPIRATION_MS:${security.jwt.expiration-ms:86400000}}") long expiration) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalArgumentException("JWT secret must contain at least 32 UTF-8 bytes");
+        }
+        if (expiration <= 0) {
+            throw new IllegalArgumentException("JWT expiration must be greater than zero");
+        }
+        this.secret = secret;
+        this.expiration = expiration;
+    }
 
     private Key getKey() {
-        return Keys.hmacShaKeyFor(secret.getBytes());
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

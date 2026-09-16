@@ -144,12 +144,16 @@ reservation:
     expiry-hours: 24
   rate-limiting:
     enabled: true
+    capacity: 20
+    refill-tokens: 20
+    refill-period: 1m
+    max-tracked-clients: 10000
   expiry:
-    hours: 24
     check-minutes: 15
 ```
 
-Adjust these values for the deployment environment and expected workload.
+Reservations are expired after their associated slot's `endTime`. Adjust the
+remaining values for the deployment environment and expected workload.
 
 ## Getting Started
 
@@ -160,11 +164,20 @@ git clone https://github.com/HoomanDevp/reservation.git
 cd reservation
 ```
 
-Start PostgreSQL and Redis using the repository's container configuration where applicable:
+Copy the environment template and replace both example secrets before starting the containers:
+
+```bash
+cp .env.example .env
+```
+
+Then start the complete application stack:
 
 ```bash
 docker compose up -d
 ```
+
+For a local IDE launch, set `DB_PASSWORD` and `JWT_SECRET` in the run
+configuration. The JWT secret must contain at least 32 UTF-8 bytes.
 
 Build the project:
 

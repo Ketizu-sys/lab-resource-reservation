@@ -32,7 +32,8 @@ public class CacheableOperationsImpl implements CacheableOperations {
     public Optional<AvailableSlot> findNextAvailableSlotCached(LocalDateTime now) {
         // 只有缓存未命中时才会进入方法体并查询 PostgreSQL。
         logger.debug("Finding next available time slot (cached)");
-        Optional<AvailableSlot> slot = timeSlotRepository.findNextAvailable(now);
+        Optional<AvailableSlot> slot = timeSlotRepository
+            .findFirstByIsReservedFalseAndStartTimeGreaterThanEqualOrderByStartTimeAsc(now);
         if (slot.isPresent()) {
             logger.debug("Found available slot: id={}, startTime={}", slot.get().getId(), slot.get().getStartTime());
         } else {

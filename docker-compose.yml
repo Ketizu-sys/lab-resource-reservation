@@ -8,15 +8,17 @@ services:
       - "8081:8081"
     environment:
       # 容器内通过服务名 postgres/redis 访问依赖，覆盖本地开发配置。
-      - SPRING_PROFILES_ACTIVE=dev
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/reservationdb
-      - SPRING_DATASOURCE_USERNAME=azki
-      - SPRING_DATASOURCE_PASSWORD=azki!p@ss
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6379
-      - SPRING_LIQUIBASE_ENABLED=true
-      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
-      - LOGGING_FILE_NAME=/app/logs/reservation-app.log
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-reservationdb}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-azki}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_LIQUIBASE_ENABLED: true
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      LOGGING_FILE_NAME: /app/logs/reservation-app.log
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置 JWT_SECRET}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,15 +42,15 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=reservationdb
-      - POSTGRES_USER=azki
-      - POSTGRES_PASSWORD=azki!p@ss
+      POSTGRES_DB: ${POSTGRES_DB:-reservationdb}
+      POSTGRES_USER: ${POSTGRES_USER:-azki}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # 可选：需要额外初始化数据库时，可把脚本挂载到下面的目录
       # - ./src/main/resources/db/init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U azki -d reservationdb"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,28 +1,35 @@
 package com.azki.reservation.repository;
 
 import com.azki.reservation.entity.AvailableSlot;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 
 public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
     /**
-     * 查询当前时间之后的全部空闲时段，并按开始时间升序排列。
-     * PESSIMISTIC_WRITE 会在事务期间锁住查询到的数据库行，降低并发抢占同一时段的概率。
+     * 只读查询最近的空闲时段，供页面展示和短时间缓存使用。
      */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query(value = "SELECT t FROM AvailableSlot t WHERE t.isReserved = false AND t.startTime >= :now ORDER BY t.startTime ASC")
-    List<AvailableSlot> findAvailableSlots(@Param("now") LocalDateTime now);
+    Optional<AvailableSlot> findFirstByIsReservedFalseAndStartTimeGreaterThanEqualOrderByStartTimeAsc(
+        LocalDateTime now
+    );
 
-    /** 从已排序结果中取第一条，即距离 now 最近的空闲时段。 */
-    default Optional<AvailableSlot> findNextAvailable(LocalDateTime now) {
-        List<AvailableSlot> slots = findAvailableSlots(now);
-        return slots.isEmpty() ? Optional.empty() : Optional.of(slots.getFirst());
-    }
+    /**
+     * 在预约事务中只锁定一条最近时段。
+     *
+     * <p>{@code SKIP LOCKED} 让并发事务跳过已被其他请求占用的候选行，
+     * 避免像原实现一样查询并锁住全部空闲时段。</p>
+     */
+    @Query(value = """
+        SELECT *
+        FROM available_slot
+        WHERE is_reserved = false
+          AND start_time >= :now
+        ORDER BY start_time ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    Optional<AvailableSlot> findNextAvailableForUpdate(@Param("now") LocalDateTime now);
 }

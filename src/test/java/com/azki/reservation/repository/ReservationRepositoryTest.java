@@ -16,6 +16,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -105,5 +106,51 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
 
         // 验证：过去的预约不应被视作未来预约。
         assertFalse(exists);
+    }
+
+    @Test
+    void findExpiredReservations_shouldUseSlotEndTimeInsteadOfReservationCreationTime() {
+        LocalDateTime now = LocalDateTime.now();
+
+        User expiredUser = createUser("expired@example.com");
+        AvailableSlot expiredSlot = createSlot(now.minusHours(2), now.minusHours(1));
+        Reservation expiredReservation = createReservation(expiredUser, expiredSlot, now.minusDays(7));
+
+        User futureUser = createUser("future@example.com");
+        AvailableSlot futureSlot = createSlot(now.plusDays(2), now.plusDays(2).plusHours(1));
+        createReservation(futureUser, futureSlot, now.minusDays(7));
+
+        entityManager.flush();
+        entityManager.clear();
+
+        List<Reservation> result = reservationRepository.findExpiredReservations(now);
+
+        assertEquals(1, result.size());
+        assertEquals(expiredReservation.getId(), result.get(0).getId());
+        assertTrue(result.get(0).getAvailableSlot().getEndTime().isBefore(now));
+    }
+
+    private User createUser(String email) {
+        User user = new User();
+        user.setEmail(email);
+        user.setUserName(email);
+        user.setPassword("password");
+        return entityManager.persist(user);
+    }
+
+    private AvailableSlot createSlot(LocalDateTime startTime, LocalDateTime endTime) {
+        AvailableSlot slot = new AvailableSlot();
+        slot.setStartTime(startTime);
+        slot.setEndTime(endTime);
+        slot.setReserved(true);
+        return entityManager.persist(slot);
+    }
+
+    private Reservation createReservation(User user, AvailableSlot slot, LocalDateTime reservedAt) {
+        Reservation reservation = new Reservation();
+        reservation.setUser(user);
+        reservation.setAvailableSlot(slot);
+        reservation.setReservedAt(reservedAt);
+        return entityManager.persist(reservation);
     }
 }

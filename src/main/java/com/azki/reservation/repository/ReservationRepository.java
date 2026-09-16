@@ -24,11 +24,12 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     boolean existsByUserEmailAndStartTimeAfter(@Param("email") String email, @Param("dateTime") LocalDateTime dateTime);
 
     /**
-     * 查询创建时间早于阈值的预约，供 ReservationExpiryService 批量清理。
+     * 查询时段已经结束的预约，供 ReservationExpiryService 批量清理。
+     * JOIN FETCH 会在同一次查询中加载关联时段，避免清理循环内逐条查询。
      *
-     * @param thresholdTime 过期判断阈值
-     * @return 所有待清理的预约
+     * @param now 本次清理任务的当前时间
+     * @return 结束时间早于当前时间的预约
      */
-    @Query("SELECT r FROM Reservation r WHERE r.createdDate < :thresholdTime")
-    List<Reservation> findExpiredReservations(@Param("thresholdTime") LocalDateTime thresholdTime);
+    @Query("SELECT r FROM Reservation r JOIN FETCH r.availableSlot a WHERE a.endTime < :now")
+    List<Reservation> findExpiredReservations(@Param("now") LocalDateTime now);
 }

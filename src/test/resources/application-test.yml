@@ -27,3 +27,8 @@ reservation:
   # 集成测试直接控制队列消费时机，禁止后台定时线程抢先处理测试消息。
   scheduling:
     enabled: false
+
+security:
+  # 仅用于自动化测试，生产环境必须通过 JWT_SECRET 提供独立随机密钥。
+  jwt:
+    secret: test-only-jwt-secret-with-at-least-32-bytes
