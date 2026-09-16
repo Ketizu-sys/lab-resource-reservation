@@ -5,11 +5,25 @@ import com.azki.reservation.entity.ReservationStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
+
+    @EntityGraph(attributePaths = {"availableSlot", "availableSlot.resource"})
+    Page<Reservation> findByUserIdOrderByReservedAtDesc(Long userId, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"availableSlot", "availableSlot.resource"})
+    Page<Reservation> findByUserIdAndStatusOrderByReservedAtDesc(
+            Long userId, ReservationStatus status, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"user", "availableSlot", "availableSlot.resource"})
+    @Query("SELECT r FROM Reservation r WHERE r.id = :id")
+    java.util.Optional<Reservation> findDetailedById(@Param("id") Long id);
 
     /**
      * 判断用户是否存在与候选时段重叠的有效预约。

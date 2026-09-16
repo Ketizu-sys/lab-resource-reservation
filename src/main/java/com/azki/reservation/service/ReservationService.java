@@ -9,6 +9,7 @@ import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
+import com.azki.reservation.exception.ReservationNotFoundException;
 import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
@@ -213,7 +214,7 @@ public class ReservationService {
     public void cancelReservation(Long id, Long currentUserId) {
         logger.info("Attempting to cancel reservation with id: {}", id);
         Reservation reservation = reservationRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("Reservation not found for id: " + id));
+                .orElseThrow(() -> new ReservationNotFoundException("Reservation not found for id: " + id));
 
         if (!reservation.getUser().getId().equals(currentUserId)) {
             throw new AccessDeniedException("Reservation does not belong to current user");

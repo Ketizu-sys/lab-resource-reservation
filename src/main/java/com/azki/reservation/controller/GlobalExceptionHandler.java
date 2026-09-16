@@ -7,6 +7,7 @@ import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
 import com.azki.reservation.exception.ResourceNotFoundException;
 import com.azki.reservation.exception.SlotNotFoundException;
+import com.azki.reservation.exception.ReservationNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,6 +76,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SlotNotFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ResponseEntity<ApiError> handleSlotNotFound(SlotNotFoundException ex, HttpServletRequest request) {
+        return buildErrorResponse(ex, ex.getMessage(), HttpStatus.NOT_FOUND, request.getRequestURI());
+    }
+
+    @ExceptionHandler(ReservationNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ResponseEntity<ApiError> handleReservationNotFound(ReservationNotFoundException ex, HttpServletRequest request) {
         return buildErrorResponse(ex, ex.getMessage(), HttpStatus.NOT_FOUND, request.getRequestURI());
     }
 

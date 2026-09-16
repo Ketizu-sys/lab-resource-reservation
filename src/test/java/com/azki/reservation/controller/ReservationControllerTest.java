@@ -7,6 +7,7 @@ import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
 import com.azki.reservation.service.ReservationDtoMapper;
+import com.azki.reservation.service.UserReservationQueryService;
 import com.azki.reservation.security.AuthenticatedUser;
 import com.azki.reservation.entity.UserRole;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class ReservationControllerTest {
 
     @Mock
     private ReservationDtoMapper reservationDtoMapper;
+
+    @Mock
+    private UserReservationQueryService userReservationQueryService;
 
     @InjectMocks
     private ReservationController reservationController;

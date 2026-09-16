@@ -9,6 +9,7 @@ import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
 import com.azki.reservation.service.ReservationDtoMapper;
+import com.azki.reservation.service.UserReservationQueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -36,17 +37,37 @@ public class ReservationController {
     private final ReservationQueueService reservationQueueService;
     private final LoadMonitoringService loadMonitoringService;
     private final ReservationDtoMapper reservationDtoMapper;
+    private final UserReservationQueryService userReservationQueryService;
 
     @Autowired
     public ReservationController(
             ReservationService reservationService,
             ReservationQueueService reservationQueueService,
             LoadMonitoringService loadMonitoringService,
-            ReservationDtoMapper reservationDtoMapper) {
+            ReservationDtoMapper reservationDtoMapper,
+            UserReservationQueryService userReservationQueryService) {
         this.reservationService = reservationService;
         this.reservationQueueService = reservationQueueService;
         this.loadMonitoringService = loadMonitoringService;
         this.reservationDtoMapper = reservationDtoMapper;
+        this.userReservationQueryService = userReservationQueryService;
+    }
+
+    @Operation(summary = "查询自己的预约详情")
+    @GetMapping("/{id}")
+    public ReservationDetailsDto findReservation(
+            @PathVariable Long id,
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        return userReservationQueryService.findOwned(id, currentUser.id());
+    }
+
+    @Operation(summary = "取消自己的预约")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> cancelOwnReservation(
+            @PathVariable Long id,
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        reservationService.cancelReservation(id, currentUser.id());
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "预约指定时段")
