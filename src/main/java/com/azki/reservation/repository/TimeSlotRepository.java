@@ -69,4 +69,18 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM AvailableSlot s JOIN FETCH s.resource WHERE s.id = :id")
     Optional<AvailableSlot> findByIdForUpdate(@Param("id") Long id);
+
+    @Query("""
+        SELECT CASE WHEN COUNT(s) > 0 THEN true ELSE false END FROM AvailableSlot s
+        WHERE s.resource.id = :resourceId
+          AND (:excludeId IS NULL OR s.id <> :excludeId)
+          AND s.startTime < :end AND s.endTime > :start
+        """)
+    boolean existsOverlappingSlot(@Param("resourceId") Long resourceId,
+                                  @Param("excludeId") Long excludeId,
+                                  @Param("start") LocalDateTime start,
+                                  @Param("end") LocalDateTime end);
+
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "resource")
+    Page<AvailableSlot> findAllByOrderByStartTimeAsc(Pageable pageable);
 }
