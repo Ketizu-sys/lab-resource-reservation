@@ -28,11 +28,13 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
      * 避免像原实现一样查询并锁住全部空闲时段。</p>
      */
     @Query(value = """
-        SELECT *
-        FROM available_slot
-        WHERE is_reserved = false
-          AND start_time >= :now
-        ORDER BY start_time ASC
+        SELECT s.*
+        FROM available_slot s
+        JOIN resource r ON r.id = s.resource_id
+        WHERE s.is_reserved = false
+          AND s.start_time >= :now
+          AND r.status = 'ACTIVE'
+        ORDER BY s.start_time ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
         """, nativeQuery = true)

@@ -80,7 +80,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "预约最近的空闲时段")
-    @PostMapping("/reserve")
+    @PostMapping({"/auto", "/reserve"})
     public ResponseEntity<ReservationResponseDto> reserveNearest(
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
         ReservationRequestDto request = new ReservationRequestDto();
