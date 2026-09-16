@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.List;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 @Component
 /**
@@ -41,8 +42,12 @@ public class JwtFilter extends GenericFilter {
                 String email = jwtUtil.extractEmail(token);
                 // 再查一次数据库，避免已删除用户继续凭旧 token 获得身份。
                 userRepository.findByEmail(email).ifPresent(user -> {
+                    AuthenticatedUser principal =
+                            new AuthenticatedUser(user.getId(), user.getEmail(), user.getRole());
                     UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                            user.getEmail(), null, List.of()
+                            principal,
+                            null,
+                            List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
                     );
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 });

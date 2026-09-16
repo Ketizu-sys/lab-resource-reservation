@@ -21,6 +21,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.retry.annotation.Recover;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -72,25 +73,25 @@ public class ReservationService {
         backoff = @Backoff(delay = 10, multiplier = 1.5)
     )
     @Transactional
-    public Reservation reserveNearestSlot(String email) {
+    public Reservation reserveNearestSlot(Long userId) {
         Timer.Sample processingSample = Timer.start(meterRegistry);
-        logger.info("Attempting to reserve nearest slot for user: {}", email);
+        logger.info("Attempting to reserve nearest slot for user id: {}", userId);
         try {
             // 锁定用户行，使同一用户的并发请求依次完成“检查重叠并写入”流程。
-            User user = userRepository.findByEmailForUpdate(email)
+            User user = userRepository.findByIdForUpdate(userId)
                     .orElseThrow(() -> {
-                        logger.warn("User not found for email: {}", email);
-                        return new BusinessException("User not found for email: " + email);
+                        logger.warn("User not found for id: {}", userId);
+                        return new BusinessException("User not found for id: " + userId);
                     });
             logger.debug("Found user: id={}, email={}", user.getId(), user.getEmail());
 
             Reservation reservation = attemptReservation(user);
             logger.info("Successfully created reservation: id={} for user={} at time={}",
-                    reservation.getId(), email, reservation.getAvailableSlot().getStartTime());
+                    reservation.getId(), user.getEmail(), reservation.getAvailableSlot().getStartTime());
             meterRegistry.counter("reservation.success").increment();
             return reservation;
         } catch (BusinessException e) {
-            logger.error("Failed to create reservation for user: {}. Reason: {}", email, e.getMessage());
+            logger.error("Failed to create reservation for user id: {}. Reason: {}", userId, e.getMessage());
             meterRegistry.counter("reservation.failed").increment();
             throw e;
         } finally {
@@ -103,12 +104,12 @@ public class ReservationService {
      * 方法参数需与被重试方法一致，并在最前面增加触发恢复的异常参数。
      *
      * @param e 最终一次乐观锁异常
-     * @param email 原预约方法收到的用户邮箱
+     * @param userId 原预约方法收到的可信用户主键
      * @return 本实现不会正常返回
      * @throws ReservationCapacityExceededException 将并发冲突转换为容量繁忙提示
      */
     @Recover
-    public Reservation recoverFromOptimisticLockingFailure(OptimisticLockingFailureException e, String email) {
+    public Reservation recoverFromOptimisticLockingFailure(OptimisticLockingFailureException e, Long userId) {
         logger.error("Failed to reserve slot after {} attempts due to concurrent modifications", MAX_RETRY_ATTEMPTS);
         meterRegistry.counter("reservation.optimistic_locking_failures").increment();
         throw new ReservationCapacityExceededException("Unable to reserve time slot due to high demand, please try again later");
@@ -175,10 +176,14 @@ public class ReservationService {
      * @throws BusinessException 找不到预约时抛出
      */
     @Transactional
-    public void cancelReservation(Long id) {
+    public void cancelReservation(Long id, Long currentUserId) {
         logger.info("Attempting to cancel reservation with id: {}", id);
         Reservation reservation = reservationRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("Reservation not found for id: " + id));
+
+        if (!reservation.getUser().getId().equals(currentUserId)) {
+            throw new AccessDeniedException("Reservation does not belong to current user");
+        }
 
         if (reservation.getStatus() != ReservationStatus.ACTIVE) {
             throw new BusinessException("Only active reservations can be cancelled");

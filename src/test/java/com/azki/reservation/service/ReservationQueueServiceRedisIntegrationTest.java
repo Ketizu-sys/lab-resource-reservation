@@ -63,7 +63,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     void retryingFirstMessageShouldNotOverwriteSecondMessage() {
         String firstId = queueService.enqueueReservationRequest(request("first@example.com"));
         String secondId = queueService.enqueueReservationRequest(request("second@example.com"));
-        when(reservationService.reserveNearestSlot("first@example.com"))
+        when(reservationService.reserveNearestSlot(userId("first@example.com")))
             .thenThrow(new BusinessException("temporary failure"))
             .thenReturn(null);
 
@@ -81,7 +81,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     void exhaustedMessageShouldMoveToDlqWithoutDeletingNextMessage() {
         String failingId = queueService.enqueueReservationRequest(request("failing@example.com"));
         String healthyId = queueService.enqueueReservationRequest(request("healthy@example.com"));
-        when(reservationService.reserveNearestSlot("failing@example.com"))
+        when(reservationService.reserveNearestSlot(userId("failing@example.com")))
             .thenThrow(new BusinessException("temporary failure"));
 
         queueService.processReservationQueue();
@@ -120,7 +120,12 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
 
     private ReservationRequestDto request(String email) {
         ReservationRequestDto request = new ReservationRequestDto();
+        request.setUserId(userId(email));
         request.setEmail(email);
         return request;
+    }
+
+    private long userId(String email) {
+        return Integer.toUnsignedLong(email.hashCode());
     }
 }

@@ -21,4 +21,9 @@ public class User extends Auditable {
 
     @Column(nullable = false)
     private String password;
+
+    /** 新用户默认是普通用户；角色以字符串保存，避免枚举顺序变化污染数据。 */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private UserRole role = UserRole.USER;
 }

@@ -12,6 +12,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -61,6 +62,12 @@ public class GlobalExceptionHandler {
         logger.warn("Business rule violation: {}", ex.getMessage());
         return buildErrorResponse(ex, ex.getMessage(),
                 HttpStatus.BAD_REQUEST, request.getRequestURI());
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public ResponseEntity<ApiError> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        return buildErrorResponse(ex, "Access denied", HttpStatus.FORBIDDEN, request.getRequestURI());
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

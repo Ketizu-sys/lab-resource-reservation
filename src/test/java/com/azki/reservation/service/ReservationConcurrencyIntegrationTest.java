@@ -65,7 +65,7 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         user.setEmail(email);
         user.setUserName("concurrent-user");
         user.setPassword("encoded-password");
-        userRepository.saveAndFlush(user);
+        user = userRepository.saveAndFlush(user);
 
         LocalDateTime firstStart = LocalDateTime.now().plusHours(1);
         Resource resource = resourceRepository.saveAndFlush(resource());
@@ -75,8 +75,9 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, email));
-            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, email));
+            Long userId = user.getId();
+            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, userId));
+            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, userId));
             start.countDown();
 
             long successes = List.of(firstResult.get(), secondResult.get()).stream()
@@ -94,7 +95,7 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         user.setEmail(email);
         user.setUserName("overlap-user");
         user.setPassword("encoded-password");
-        userRepository.saveAndFlush(user);
+        user = userRepository.saveAndFlush(user);
 
         LocalDateTime firstStart = LocalDateTime.now().plusHours(3);
         Resource resource = resourceRepository.saveAndFlush(resource());
@@ -105,8 +106,9 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, email));
-            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, email));
+            Long userId = user.getId();
+            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, userId));
+            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, userId));
             start.countDown();
 
             long successes = List.of(firstResult.get(), secondResult.get()).stream()
@@ -122,8 +124,8 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
     void concurrentRequestsForSameSlotShouldCreateOnlyOneReservation() throws Exception {
         String firstEmail = "slot-first@example.com";
         String secondEmail = "slot-second@example.com";
-        userRepository.saveAndFlush(user(firstEmail, "slot-first"));
-        userRepository.saveAndFlush(user(secondEmail, "slot-second"));
+        User firstUser = userRepository.saveAndFlush(user(firstEmail, "slot-first"));
+        User secondUser = userRepository.saveAndFlush(user(secondEmail, "slot-second"));
 
         Resource resource = resourceRepository.saveAndFlush(resource());
         timeSlotRepository.saveAndFlush(slot(LocalDateTime.now().plusHours(5), resource));
@@ -131,8 +133,8 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, firstEmail));
-            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, secondEmail));
+            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, firstUser.getId()));
+            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, secondUser.getId()));
             start.countDown();
 
             long successes = List.of(firstResult.get(), secondResult.get()).stream()
@@ -144,10 +146,10 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         }
     }
 
-    private boolean reserveAfterSignal(CountDownLatch start, String email) throws InterruptedException {
+    private boolean reserveAfterSignal(CountDownLatch start, Long userId) throws InterruptedException {
         start.await();
         try {
-            reservationService.reserveNearestSlot(email);
+            reservationService.reserveNearestSlot(userId);
             return true;
         } catch (BusinessException e) {
             return false;

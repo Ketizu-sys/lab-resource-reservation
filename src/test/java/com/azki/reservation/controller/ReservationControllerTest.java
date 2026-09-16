@@ -6,6 +6,8 @@ import com.azki.reservation.entity.Reservation;
 import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
+import com.azki.reservation.security.AuthenticatedUser;
+import com.azki.reservation.entity.UserRole;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -36,8 +38,7 @@ class ReservationControllerTest {
     @Test
     void shouldQueueReservationWhenLoadIsHigh() {
         // 准备：构造请求并设定队列服务返回值。
-        ReservationRequestDto requestDto = new ReservationRequestDto();
-        requestDto.setEmail("test@example.com");
+        AuthenticatedUser currentUser = new AuthenticatedUser(1L, "test@example.com", UserRole.USER);
         String requestId = "request-123";
 
         when(loadMonitoringService.shouldQueueRequest()).thenReturn(true);
@@ -46,29 +47,29 @@ class ReservationControllerTest {
         when(reservationQueueService.getRequestStatus(requestId)).thenReturn("QUEUED");
 
         // 执行：调用创建预约接口。
-        ResponseEntity<ReservationResponseDto> response = reservationController.reserveNearest(requestDto);
+        ResponseEntity<ReservationResponseDto> response = reservationController.reserveNearest(currentUser);
 
         // 验证：请求应被接受并确实进入队列。
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         assertNotNull(response.getBody());
         assertEquals(requestId, response.getBody().getRequestId());
         assertEquals("QUEUED", response.getBody().getStatus());
-        verify(reservationQueueService).enqueueReservationRequest(requestDto);
+        verify(reservationQueueService).enqueueReservationRequest(argThat(request ->
+                request.getUserId().equals(1L) && request.getEmail().equals("test@example.com")));
         verify(loadMonitoringService).incrementActiveRequests();
         verify(loadMonitoringService).decrementActiveRequests();
     }
 
     @Test
     void shouldProcessReservationDirectlyWhenLoadIsNormal() {
-        ReservationRequestDto requestDto = new ReservationRequestDto();
-        requestDto.setEmail("test@example.com");
+        AuthenticatedUser currentUser = new AuthenticatedUser(1L, "test@example.com", UserRole.USER);
         Reservation reservation = new Reservation();
         reservation.setId(42L);
 
         when(loadMonitoringService.shouldQueueRequest()).thenReturn(false);
-        when(reservationService.reserveNearestSlot("test@example.com")).thenReturn(reservation);
+        when(reservationService.reserveNearestSlot(1L)).thenReturn(reservation);
 
-        ResponseEntity<ReservationResponseDto> response = reservationController.reserveNearest(requestDto);
+        ResponseEntity<ReservationResponseDto> response = reservationController.reserveNearest(currentUser);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
@@ -117,13 +118,14 @@ class ReservationControllerTest {
     void shouldCancelReservation() {
         // 准备：预约服务可以正常完成取消。
         Long reservationId = 1L;
-        doNothing().when(reservationService).cancelReservation(reservationId);
+        AuthenticatedUser currentUser = new AuthenticatedUser(7L, "test@example.com", UserRole.USER);
+        doNothing().when(reservationService).cancelReservation(reservationId, 7L);
 
         // 执行：调用取消接口。
-        ResponseEntity<Void> response = reservationController.cancelReservation(reservationId);
+        ResponseEntity<Void> response = reservationController.cancelReservation(reservationId, currentUser);
 
         // 验证：返回 204 且服务方法被调用一次。
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-        verify(reservationService).cancelReservation(reservationId);
+        verify(reservationService).cancelReservation(reservationId, 7L);
     }
 }

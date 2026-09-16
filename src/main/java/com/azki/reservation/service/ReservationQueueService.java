@@ -271,7 +271,7 @@ public class ReservationQueueService {
 
             updateStatus(item.requestId, RequestStatus.PROCESSING);
             try {
-                reservationService.reserveNearestSlot(item.request.getEmail());
+                reservationService.reserveNearestSlot(item.request.getUserId());
                 meterRegistry.counter("reservation.queue.processed").increment();
                 complete(claimed, RequestStatus.SUCCESS);
             } catch (DuplicateReservationException e) {
@@ -294,7 +294,7 @@ public class ReservationQueueService {
 
     private boolean isValid(QueueItem item) {
         return item != null && item.requestId != null && item.request != null
-            && item.request.getEmail() != null;
+            && item.request.getUserId() != null && item.request.getEmail() != null;
     }
 
     private void updateStatus(String requestId, RequestStatus status) {

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 为权限闭环增加角色；已有用户安全回填为普通用户。 -->
+    <changeSet id="6-add-user-role" author="Hu">
+        <addColumn tableName="users">
+            <column name="role" type="VARCHAR(32)" defaultValue="USER"/>
+        </addColumn>
+        <addNotNullConstraint tableName="users" columnName="role" columnDataType="VARCHAR(32)"/>
+        <sql>
+            ALTER TABLE users
+            ADD CONSTRAINT chk_user_role CHECK (role IN ('USER', 'ADMIN'));
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

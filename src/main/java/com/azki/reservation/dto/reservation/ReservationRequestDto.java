@@ -1,13 +1,13 @@
 package com.azki.reservation.dto.reservation;
 
 import lombok.Data;
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
 
 @Data
-/** 创建预约的请求参数。当前业务仅根据用户邮箱自动选择最近空闲时段。 */
+/**
+ * 自动预约的内部队列参数。
+ * HTTP 接口不再反序列化该对象，userId 和 email 都由认证身份生成。
+ */
 public class ReservationRequestDto {
-    @Email(message = "Invalid email format")
-    @NotBlank(message = "Email is required")
+    private Long userId;
     private String email;
 }

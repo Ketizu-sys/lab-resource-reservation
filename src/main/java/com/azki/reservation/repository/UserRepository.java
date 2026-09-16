@@ -38,4 +38,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
         List<User> users = findByEmailForUpdateOrderedById(email);
         return users.isEmpty() ? Optional.empty() : Optional.of(users.getFirst());
     }
+
+    /** 预约写流程按可信用户主键锁定用户，避免继续依赖客户端可伪造的邮箱。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    Optional<User> findByIdForUpdate(@Param("id") Long id);
 }

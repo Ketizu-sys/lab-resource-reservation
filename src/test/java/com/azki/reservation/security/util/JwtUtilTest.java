@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,5 +32,14 @@ class JwtUtilTest {
     @Test
     void shouldRejectNonPositiveExpirationAtStartup() {
         assertThrows(IllegalArgumentException.class, () -> new JwtUtil(TEST_SECRET, 0));
+    }
+
+    @Test
+    void shouldRejectExpiredToken() throws InterruptedException {
+        JwtUtil jwtUtil = new JwtUtil(TEST_SECRET, 1);
+        String token = jwtUtil.generateToken("expired@example.com");
+        Thread.sleep(5);
+
+        assertFalse(jwtUtil.isTokenValid(token));
     }
 }

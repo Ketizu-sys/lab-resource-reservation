@@ -8,12 +8,13 @@ import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import com.azki.reservation.security.AuthenticatedUser;
 
 /**
  * 预约业务的 HTTP 入口。
@@ -43,7 +44,11 @@ public class ReservationController {
 
     @Operation(summary = "预约最近的空闲时段")
     @PostMapping("/reserve")
-    public ResponseEntity<ReservationResponseDto> reserveNearest(@RequestBody @Valid ReservationRequestDto request) {
+    public ResponseEntity<ReservationResponseDto> reserveNearest(
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        ReservationRequestDto request = new ReservationRequestDto();
+        request.setUserId(currentUser.id());
+        request.setEmail(currentUser.email());
         try {
             // 先计入当前正在处理的请求；计数是 shouldQueueRequest() 的判断依据。
             loadMonitoringService.incrementActiveRequests();
@@ -58,7 +63,7 @@ public class ReservationController {
             } else {
                 // 正常负载路径：在当前 HTTP 请求中完成选时段和数据库写入。
                 logger.info("Processing reservation request for {} directly", request.getEmail());
-                Reservation reservation = reservationService.reserveNearestSlot(request.getEmail());
+                Reservation reservation = reservationService.reserveNearestSlot(currentUser.id());
                 String requestId = "direct-" + reservation.getId();
                 return ResponseEntity.ok().body(new ReservationResponseDto(requestId, "SUCCESS"));
             }
@@ -80,8 +85,10 @@ public class ReservationController {
 
     @Operation(summary = "根据预约 ID 取消预约")
     @DeleteMapping("/cancel/{id}")
-    public ResponseEntity<Void> cancelReservation(@PathVariable Long id) {
-        reservationService.cancelReservation(id);
+    public ResponseEntity<Void> cancelReservation(
+            @PathVariable Long id,
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        reservationService.cancelReservation(id, currentUser.id());
         return ResponseEntity.noContent().build();
     }
 }

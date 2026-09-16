@@ -50,6 +50,7 @@ class ReservationQueueServiceTest {
     void shouldEnqueueReservationRequest() {
         // 准备：构造合法预约请求。
         ReservationRequestDto request = new ReservationRequestDto();
+        request.setUserId(1L);
         request.setEmail("test@example.com");
         when(redisTemplate.execute(
             any(RedisScript.class), anyList(), any(), any(), any(), any()
@@ -118,6 +119,7 @@ class ReservationQueueServiceTest {
     void shouldHandleDuplicateReservationException() {
         // 准备：同一邮箱已经存在于排队集合。
         ReservationRequestDto request = new ReservationRequestDto();
+        request.setUserId(1L);
         request.setEmail("test@example.com");
 
         when(redisTemplate.execute(

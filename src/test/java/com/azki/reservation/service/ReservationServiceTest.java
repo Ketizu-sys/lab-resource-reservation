@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -99,7 +100,7 @@ class ReservationServiceTest {
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
 
-        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(user.getId())).thenReturn(Optional.of(user));
         when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
         when(timeSlotRepository.save(any(AvailableSlot.class))).thenReturn(slot);
         when(reservationRepository.saveAndFlush(any(Reservation.class))).thenReturn(reservation);
@@ -108,14 +109,14 @@ class ReservationServiceTest {
                 .thenReturn(false);
 
         // 执行：为用户创建预约。
-        Reservation result = reservationService.reserveNearestSlot(email);
+        Reservation result = reservationService.reserveNearestSlot(user.getId());
 
         // 验证：时段和预约均被保存。
         assertNotNull(result);
         assertEquals(1L, result.getId());
         verify(timeSlotRepository).save(any(AvailableSlot.class));
         verify(reservationRepository).saveAndFlush(any(Reservation.class));
-        verify(userRepository).findByEmailForUpdate(email);
+        verify(userRepository).findByIdForUpdate(user.getId());
         verify(cacheableOperations, never()).findNextAvailableSlotCached(any(LocalDateTime.class));
         assertEquals(1, meterRegistry.timer("reservation.processing.time").count());
         assertEquals(1, meterRegistry.timer("reservation.slot.selection.time").count());
@@ -135,14 +136,14 @@ class ReservationServiceTest {
         slot.setStartTime(now.plusHours(1));
         slot.setEndTime(now.plusHours(2));
 
-        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(user.getId())).thenReturn(Optional.of(user));
         when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
         when(reservationRepository.existsOverlappingReservation(
                 eq(user.getId()), eq(ReservationStatus.ACTIVE), eq(slot.getStartTime()), eq(slot.getEndTime())))
                 .thenReturn(true);
 
         // 执行并验证：应拒绝重复预约。
-        assertThrows(DuplicateReservationException.class, () -> reservationService.reserveNearestSlot(email));
+        assertThrows(DuplicateReservationException.class, () -> reservationService.reserveNearestSlot(user.getId()));
     }
 
     @Test
@@ -153,11 +154,11 @@ class ReservationServiceTest {
         user.setId(1L);
         user.setEmail(email);
 
-        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(user.getId())).thenReturn(Optional.of(user));
         when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.empty());
 
         // 执行并验证：应抛出无可用预约异常。
-        assertThrows(ReservationNotAvailableException.class, () -> reservationService.reserveNearestSlot(email));
+        assertThrows(ReservationNotAvailableException.class, () -> reservationService.reserveNearestSlot(user.getId()));
         assertEquals(1, meterRegistry.timer("reservation.processing.time").count());
         assertEquals(1, meterRegistry.timer("reservation.slot.selection.time").count());
     }
@@ -187,7 +188,7 @@ class ReservationServiceTest {
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
 
         // 执行：取消预约。
-        reservationService.cancelReservation(reservationId);
+        reservationService.cancelReservation(reservationId, user.getId());
 
         // 验证：时段被释放，预约转为已取消且历史记录仍保留。
         verify(timeSlotRepository).save(any(AvailableSlot.class));
@@ -205,7 +206,7 @@ class ReservationServiceTest {
         Reservation reservation = reservationWithStatus(ReservationStatus.COMPLETED, LocalDateTime.now().plusHours(1));
         when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
 
-        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L));
+        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L, 1L));
 
         verify(timeSlotRepository, never()).save(any());
         verify(reservationRepository, never()).saveAndFlush(any());
@@ -216,10 +217,20 @@ class ReservationServiceTest {
         Reservation reservation = reservationWithStatus(ReservationStatus.ACTIVE, LocalDateTime.now().minusMinutes(1));
         when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
 
-        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L));
+        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L, 1L));
 
         verify(timeSlotRepository, never()).save(any());
         verify(reservationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectCancellationOwnedByAnotherUser() {
+        Reservation reservation = reservationWithStatus(ReservationStatus.ACTIVE, LocalDateTime.now().plusHours(1));
+        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+
+        assertThrows(AccessDeniedException.class, () -> reservationService.cancelReservation(1L, 99L));
+
+        verify(timeSlotRepository, never()).save(any());
     }
 
     private Reservation reservationWithStatus(ReservationStatus status, LocalDateTime startTime) {
@@ -232,6 +243,9 @@ class ReservationServiceTest {
         reservation.setId(1L);
         reservation.setStatus(status);
         reservation.setAvailableSlot(slot);
+        User user = new User();
+        user.setId(1L);
+        reservation.setUser(user);
         return reservation;
     }
 }
