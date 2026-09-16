@@ -2,10 +2,13 @@ package com.azki.reservation.controller;
 
 import com.azki.reservation.dto.reservation.ReservationRequestDto;
 import com.azki.reservation.dto.reservation.ReservationResponseDto;
+import com.azki.reservation.dto.reservation.ManualReservationRequest;
+import com.azki.reservation.dto.reservation.ReservationDetailsDto;
 import com.azki.reservation.entity.Reservation;
 import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
+import com.azki.reservation.service.ReservationDtoMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -15,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import com.azki.reservation.security.AuthenticatedUser;
+import jakarta.validation.Valid;
 
 /**
  * 预约业务的 HTTP 入口。
@@ -31,15 +35,27 @@ public class ReservationController {
     private final ReservationService reservationService;
     private final ReservationQueueService reservationQueueService;
     private final LoadMonitoringService loadMonitoringService;
+    private final ReservationDtoMapper reservationDtoMapper;
 
     @Autowired
     public ReservationController(
             ReservationService reservationService,
             ReservationQueueService reservationQueueService,
-            LoadMonitoringService loadMonitoringService) {
+            LoadMonitoringService loadMonitoringService,
+            ReservationDtoMapper reservationDtoMapper) {
         this.reservationService = reservationService;
         this.reservationQueueService = reservationQueueService;
         this.loadMonitoringService = loadMonitoringService;
+        this.reservationDtoMapper = reservationDtoMapper;
+    }
+
+    @Operation(summary = "预约指定时段")
+    @PostMapping
+    public ResponseEntity<ReservationDetailsDto> reserveSlot(
+            @Valid @RequestBody ManualReservationRequest request,
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        Reservation reservation = reservationService.reserveSlot(currentUser.id(), request.slotId());
+        return ResponseEntity.ok(reservationDtoMapper.toDto(reservation));
     }
 
     @Operation(summary = "预约最近的空闲时段")

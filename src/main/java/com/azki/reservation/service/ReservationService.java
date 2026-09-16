@@ -4,6 +4,7 @@ import com.azki.reservation.entity.Reservation;
 import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.User;
+import com.azki.reservation.entity.ResourceStatus;
 import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
@@ -99,6 +100,15 @@ public class ReservationService {
         }
     }
 
+    /** 在同一事务中锁定用户和指定时段，并完成全部预约校验与写入。 */
+    @Transactional
+    public Reservation reserveSlot(Long userId, Long slotId) {
+        User user = lockUser(userId);
+        AvailableSlot slot = timeSlotRepository.findByIdForUpdate(slotId)
+                .orElseThrow(() -> new ReservationNotAvailableException("Time slot not found"));
+        return createReservation(user, slot);
+    }
+
     /**
      * 乐观锁重试全部耗尽后的恢复入口。
      * 方法参数需与被重试方法一致，并在最前面增加触发恢复的异常参数。
@@ -134,6 +144,13 @@ public class ReservationService {
             selectionSample.stop(meterRegistry.timer("reservation.slot.selection.time"));
         }
 
+        return createReservation(user, freshSlot);
+    }
+
+    /** 手工和自动预约共同使用的最终业务规则与写库入口。 */
+    protected Reservation createReservation(User user, AvailableSlot freshSlot) {
+        validateSlotCanBeReserved(freshSlot);
+
         // 允许同一用户拥有多个未来预约，但候选时段不能与其 ACTIVE 预约重叠。
         if (reservationRepository.existsOverlappingReservation(
                 user.getId(),
@@ -166,6 +183,23 @@ public class ReservationService {
         } catch (DataIntegrityViolationException e) {
             logger.warn("Database rejected duplicate active reservation for slot {}", savedSlot.getId());
             throw new DuplicateReservationException("Time slot already has an active reservation");
+        }
+    }
+
+    private User lockUser(Long userId) {
+        return userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new BusinessException("User not found for id: " + userId));
+    }
+
+    private void validateSlotCanBeReserved(AvailableSlot slot) {
+        if (slot.getResource() != null && slot.getResource().getStatus() != ResourceStatus.ACTIVE) {
+            throw new ReservationNotAvailableException("Resource is not active");
+        }
+        if (!slot.getStartTime().isAfter(LocalDateTime.now())) {
+            throw new ReservationNotAvailableException("Time slot has already started");
+        }
+        if (slot.isReserved()) {
+            throw new ReservationNotAvailableException("Time slot is already reserved");
         }
     }
 

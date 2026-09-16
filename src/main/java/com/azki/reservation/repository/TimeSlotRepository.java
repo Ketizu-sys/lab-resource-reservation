@@ -3,10 +3,12 @@ package com.azki.reservation.repository;
 import com.azki.reservation.entity.AvailableSlot;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import com.azki.reservation.entity.ResourceType;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -60,4 +62,9 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
           AND r.status = com.azki.reservation.entity.ResourceStatus.ACTIVE
         """)
     Optional<AvailableSlot> findVisibleAvailableById(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    /** 手工预约时锁定指定时段，同时加载资源以便在同一事务中校验。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM AvailableSlot s JOIN FETCH s.resource WHERE s.id = :id")
+    Optional<AvailableSlot> findByIdForUpdate(@Param("id") Long id);
 }
