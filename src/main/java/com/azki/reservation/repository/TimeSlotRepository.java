@@ -4,6 +4,9 @@ import com.azki.reservation.entity.AvailableSlot;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import com.azki.reservation.entity.ResourceType;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -32,4 +35,29 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
         FOR UPDATE SKIP LOCKED
         """, nativeQuery = true)
     Optional<AvailableSlot> findNextAvailableForUpdate(@Param("now") LocalDateTime now);
+
+    /** 按资源、资源类型和时间窗口分页查询普通用户可见的空闲时段。 */
+    @Query("""
+        SELECT s FROM AvailableSlot s JOIN s.resource r
+        WHERE s.isReserved = false
+          AND s.startTime >= :start
+          AND r.status = com.azki.reservation.entity.ResourceStatus.ACTIVE
+          AND (:resourceId IS NULL OR r.id = :resourceId)
+          AND (:resourceType IS NULL OR r.type = :resourceType)
+          AND s.endTime <= :end
+        ORDER BY s.startTime ASC
+        """)
+    Page<AvailableSlot> findAvailableSlots(
+            @Param("resourceId") Long resourceId,
+            @Param("resourceType") ResourceType resourceType,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end,
+            Pageable pageable);
+
+    @Query("""
+        SELECT s FROM AvailableSlot s JOIN FETCH s.resource r
+        WHERE s.id = :id AND s.isReserved = false AND s.startTime >= :now
+          AND r.status = com.azki.reservation.entity.ResourceStatus.ACTIVE
+        """)
+    Optional<AvailableSlot> findVisibleAvailableById(@Param("id") Long id, @Param("now") LocalDateTime now);
 }
