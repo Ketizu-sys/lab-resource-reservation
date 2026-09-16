@@ -2,6 +2,7 @@ package com.azki.reservation.repository;
 
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.Reservation;
+import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.entity.Resource;
 import com.azki.reservation.entity.ResourceStatus;
 import com.azki.reservation.entity.ResourceType;
@@ -38,7 +39,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
     private ReservationRepository reservationRepository;
 
     @Test
-    void existsByUserEmailAndStartTimeAfter_shouldReturnTrueWhenFutureReservationExists() {
+    void existsOverlappingReservation_shouldReturnTrueForOverlappingActiveReservation() {
         // 准备：创建用户、未来时段及其预约。
         String email = "test@azki.com";
         LocalDateTime now = LocalDateTime.now();
@@ -70,14 +71,15 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
 
         // 执行：从当前时间开始检查未来预约。
-        boolean exists = reservationRepository.existsByUserEmailAndStartTimeAfter(email, now);
+        boolean exists = reservationRepository.existsOverlappingReservation(
+                user.getId(), ReservationStatus.ACTIVE, futureTime.plusMinutes(30), futureTime.plusHours(2));
 
         // 验证：应检测到未来预约。
         assertTrue(exists);
     }
 
     @Test
-    void existsByUserEmailAndStartTimeAfter_shouldReturnFalseWhenNoFutureReservationExists() {
+    void existsOverlappingReservation_shouldReturnFalseForNonOverlappingReservation() {
         // 准备：创建一条只关联过去时段的预约。
         String email = "test@example.com";
         LocalDateTime now = LocalDateTime.now();
@@ -109,7 +111,8 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
 
         // 执行：从当前时间开始检查未来预约。
-        boolean exists = reservationRepository.existsByUserEmailAndStartTimeAfter(email, now);
+        boolean exists = reservationRepository.existsOverlappingReservation(
+                user.getId(), ReservationStatus.ACTIVE, now.plusHours(1), now.plusHours(2));
 
         // 验证：过去的预约不应被视作未来预约。
         assertFalse(exists);
@@ -130,11 +133,35 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
         entityManager.clear();
 
-        List<Reservation> result = reservationRepository.findExpiredReservations(now);
+        List<Reservation> result = reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE);
 
         assertEquals(1, result.size());
         assertEquals(expiredReservation.getId(), result.get(0).getId());
         assertTrue(result.get(0).getAvailableSlot().getEndTime().isBefore(now));
+    }
+
+    @Test
+    void cancelledReservationShouldNotBlockSameSlotAndShouldNotBeExpiredAgain() {
+        LocalDateTime now = LocalDateTime.now();
+        User firstUser = createUser("cancelled@example.com");
+        User secondUser = createUser("replacement@example.com");
+        AvailableSlot slot = createSlot(now.minusHours(2), now.minusHours(1));
+
+        Reservation cancelled = createReservation(firstUser, slot, now.minusDays(1));
+        cancelled.setStatus(ReservationStatus.CANCELLED);
+        cancelled.setCancelledAt(now.minusHours(3));
+        // IDENTITY 主键会在 persist 时立即插入；先刷新状态变更，再创建同一时段的新预约。
+        entityManager.flush();
+
+        Reservation replacement = createReservation(secondUser, slot, now.minusHours(2));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertNotNull(replacement.getId());
+        assertTrue(reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE)
+                .stream().anyMatch(r -> r.getId().equals(replacement.getId())));
+        assertTrue(reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE)
+                .stream().noneMatch(r -> r.getId().equals(cancelled.getId())));
     }
 
     private User createUser(String email) {

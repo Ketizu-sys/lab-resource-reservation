@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 引入预约生命周期：取消和完成都保留历史记录，不再通过删除表示状态。 -->
+    <changeSet id="5-reservation-lifecycle" author="Hu">
+        <addColumn tableName="reservation">
+            <column name="status" type="VARCHAR(32)" defaultValue="ACTIVE"/>
+            <column name="cancelled_at" type="TIMESTAMP"/>
+            <column name="completed_at" type="TIMESTAMP"/>
+            <column name="cancel_reason" type="VARCHAR(500)"/>
+        </addColumn>
+
+        <!-- 迁移时已经结束的旧预约直接归档为完成，其余旧记录保持有效。 -->
+        <sql>
+            UPDATE reservation r
+            SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+            FROM available_slot s
+            WHERE r.available_slot_id = s.id
+              AND s.end_time &lt; CURRENT_TIMESTAMP;
+        </sql>
+
+        <addNotNullConstraint tableName="reservation" columnName="status" columnDataType="VARCHAR(32)"/>
+
+        <!-- 生命周期引入后，用户可拥有多个互不重叠的预约，时段也可保留多条历史记录。 -->
+        <dropUniqueConstraint tableName="reservation" constraintName="uk_reservation_active_user"/>
+
+        <!-- 初始变更集未显式命名该约束，PostgreSQL 按列生成如下名称。 -->
+        <sql>ALTER TABLE reservation DROP CONSTRAINT IF EXISTS reservation_available_slot_id_key;</sql>
+
+        <sql>
+            ALTER TABLE reservation
+            ADD CONSTRAINT chk_reservation_status
+            CHECK (status IN ('ACTIVE', 'CANCELLED', 'COMPLETED'));
+        </sql>
+
+        <!-- 同一时段允许存在历史记录，但任何时刻最多只能有一条有效预约。 -->
+        <sql>
+            CREATE UNIQUE INDEX uk_reservation_active_slot
+            ON reservation (available_slot_id)
+            WHERE status = 'ACTIVE';
+        </sql>
+
+        <createIndex tableName="reservation" indexName="idx_reservation_user_status">
+            <column name="user_id"/>
+            <column name="status"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

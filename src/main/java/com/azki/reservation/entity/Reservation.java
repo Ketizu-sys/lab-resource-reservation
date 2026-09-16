@@ -13,8 +13,9 @@ import java.util.Objects;
 @Entity
 @Table(name = "reservation")
 /**
- * 预约记录，把一个用户与一个可用时段关联起来。
- * 数据库对 available_slot_id 设置唯一约束，保证同一时段最多对应一条预约。
+ * 预约记录，把一个用户与一个可用时段关联起来，并保留完整生命周期。
+ *
+ * <p>同一时段可以存在多条历史记录，但数据库只允许一条 ACTIVE 预约。</p>
  */
 public class Reservation extends Auditable{
     @Id
@@ -25,12 +26,29 @@ public class Reservation extends Auditable{
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @OneToOne(optional = false)
+    @ManyToOne(optional = false)
     @JoinColumn(name = "available_slot_id", nullable = false)
     private AvailableSlot availableSlot;
 
     @Column(name = "reserved_at", nullable = false)
     private LocalDateTime reservedAt;
+
+    /** 当前生命周期状态；新建预约默认处于有效状态。 */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 32)
+    private ReservationStatus status = ReservationStatus.ACTIVE;
+
+    /** 用户取消预约的时间，仅 CANCELLED 状态使用。 */
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    /** 预约自然结束并转为 COMPLETED 的时间。 */
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+
+    /** 取消原因；当前取消接口未接收原因时写入默认说明。 */
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
 
     @Override
     public final boolean equals(Object o) {

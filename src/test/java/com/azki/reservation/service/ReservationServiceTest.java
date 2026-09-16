@@ -2,7 +2,9 @@ package com.azki.reservation.service;
 
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.Reservation;
+import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.entity.User;
+import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
 import com.azki.reservation.repository.ReservationRepository;
@@ -21,7 +23,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -98,11 +99,13 @@ class ReservationServiceTest {
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
 
-        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
         when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
         when(timeSlotRepository.save(any(AvailableSlot.class))).thenReturn(slot);
         when(reservationRepository.saveAndFlush(any(Reservation.class))).thenReturn(reservation);
-        when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
+        when(reservationRepository.existsOverlappingReservation(
+                eq(user.getId()), eq(ReservationStatus.ACTIVE), eq(slot.getStartTime()), eq(slot.getEndTime())))
+                .thenReturn(false);
 
         // 执行：为用户创建预约。
         Reservation result = reservationService.reserveNearestSlot(email);
@@ -112,6 +115,7 @@ class ReservationServiceTest {
         assertEquals(1L, result.getId());
         verify(timeSlotRepository).save(any(AvailableSlot.class));
         verify(reservationRepository).saveAndFlush(any(Reservation.class));
+        verify(userRepository).findByEmailForUpdate(email);
         verify(cacheableOperations, never()).findNextAvailableSlotCached(any(LocalDateTime.class));
         assertEquals(1, meterRegistry.timer("reservation.processing.time").count());
         assertEquals(1, meterRegistry.timer("reservation.slot.selection.time").count());
@@ -119,14 +123,23 @@ class ReservationServiceTest {
 
     @Test
     void shouldThrowExceptionWhenUserAlreadyHasActiveReservation() {
-        // 准备：用户已经持有未来预约。
+        // 准备：用户已经持有与候选时段重叠的有效预约。
         String email = "test@example.com";
+        LocalDateTime now = LocalDateTime.now();
         User user = new User();
         user.setId(1L);
         user.setEmail(email);
 
-        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
-        when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(true);
+        AvailableSlot slot = new AvailableSlot();
+        slot.setId(1L);
+        slot.setStartTime(now.plusHours(1));
+        slot.setEndTime(now.plusHours(2));
+
+        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
+        when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.of(slot));
+        when(reservationRepository.existsOverlappingReservation(
+                eq(user.getId()), eq(ReservationStatus.ACTIVE), eq(slot.getStartTime()), eq(slot.getEndTime())))
+                .thenReturn(true);
 
         // 执行并验证：应拒绝重复预约。
         assertThrows(DuplicateReservationException.class, () -> reservationService.reserveNearestSlot(email));
@@ -140,8 +153,7 @@ class ReservationServiceTest {
         user.setId(1L);
         user.setEmail(email);
 
-        when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
-        when(reservationRepository.existsByUserEmailAndStartTimeAfter(anyString(), any(LocalDateTime.class))).thenReturn(false);
+        when(userRepository.findByEmailForUpdate(email)).thenReturn(Optional.of(user));
         when(timeSlotRepository.findNextAvailableForUpdate(any(LocalDateTime.class))).thenReturn(Optional.empty());
 
         // 执行并验证：应抛出无可用预约异常。
@@ -170,16 +182,56 @@ class ReservationServiceTest {
         reservation.setId(reservationId);
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
+        reservation.setStatus(ReservationStatus.ACTIVE);
 
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
 
         // 执行：取消预约。
         reservationService.cancelReservation(reservationId);
 
-        // 验证：时段被释放，预约记录被删除。
+        // 验证：时段被释放，预约转为已取消且历史记录仍保留。
         verify(timeSlotRepository).save(any(AvailableSlot.class));
-        verify(reservationRepository).delete(any(Reservation.class));
+        verify(reservationRepository).saveAndFlush(reservation);
+        verify(reservationRepository, never()).delete(any(Reservation.class));
         verify(cacheableOperations).evictNextSlotCache();
         assertFalse(slot.isReserved());
+        assertEquals(ReservationStatus.CANCELLED, reservation.getStatus());
+        assertNotNull(reservation.getCancelledAt());
+        assertEquals("Cancelled by user", reservation.getCancelReason());
+    }
+
+    @Test
+    void shouldRejectCancellationWhenReservationIsNotActive() {
+        Reservation reservation = reservationWithStatus(ReservationStatus.COMPLETED, LocalDateTime.now().plusHours(1));
+        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+
+        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L));
+
+        verify(timeSlotRepository, never()).save(any());
+        verify(reservationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectCancellationAfterSlotHasStarted() {
+        Reservation reservation = reservationWithStatus(ReservationStatus.ACTIVE, LocalDateTime.now().minusMinutes(1));
+        when(reservationRepository.findById(1L)).thenReturn(Optional.of(reservation));
+
+        assertThrows(BusinessException.class, () -> reservationService.cancelReservation(1L));
+
+        verify(timeSlotRepository, never()).save(any());
+        verify(reservationRepository, never()).saveAndFlush(any());
+    }
+
+    private Reservation reservationWithStatus(ReservationStatus status, LocalDateTime startTime) {
+        AvailableSlot slot = new AvailableSlot();
+        slot.setStartTime(startTime);
+        slot.setEndTime(startTime.plusHours(1));
+        slot.setReserved(true);
+
+        Reservation reservation = new Reservation();
+        reservation.setId(1L);
+        reservation.setStatus(status);
+        reservation.setAvailableSlot(slot);
+        return reservation;
     }
 }

@@ -1,6 +1,7 @@
 package com.azki.reservation.service;
 
 import com.azki.reservation.entity.Reservation;
+import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.User;
 import com.azki.reservation.exception.BusinessException;
@@ -29,7 +30,7 @@ import java.util.Optional;
 /**
  * 预约领域的核心业务服务。
  *
- * <p>负责校验用户、阻止重复预约、选择最近时段、写入预约、取消预约，
+ * <p>负责校验用户、阻止时间重叠、选择最近时段、写入预约、取消预约，
  * 并在时段状态改变后维护缓存一致性。同步接口和 Redis 队列最终都会调用本类。</p>
  */
 @Service
@@ -62,7 +63,7 @@ public class ReservationService {
      *
      * @param email 发起预约的用户邮箱
      * @return 已持久化的预约记录
-     * @throws BusinessException 用户不存在、已有未来预约或没有可用时段时抛出
+     * @throws BusinessException 用户不存在、预约时间重叠或没有可用时段时抛出
      */
     @Retryable(
         retryFor = OptimisticLockingFailureException.class,
@@ -75,18 +76,13 @@ public class ReservationService {
         Timer.Sample processingSample = Timer.start(meterRegistry);
         logger.info("Attempting to reserve nearest slot for user: {}", email);
         try {
-            User user = userRepository.findByEmail(email)
+            // 锁定用户行，使同一用户的并发请求依次完成“检查重叠并写入”流程。
+            User user = userRepository.findByEmailForUpdate(email)
                     .orElseThrow(() -> {
                         logger.warn("User not found for email: {}", email);
                         return new BusinessException("User not found for email: " + email);
                     });
             logger.debug("Found user: id={}, email={}", user.getId(), user.getEmail());
-
-            // 业务约束：同一用户不能同时拥有另一条未来预约。
-            if (reservationRepository.existsByUserEmailAndStartTimeAfter(email, LocalDateTime.now())) {
-                logger.warn("Duplicate reservation attempt detected for user: {}", email);
-                throw new DuplicateReservationException("User already has an active reservation");
-            }
 
             Reservation reservation = attemptReservation(user);
             logger.info("Successfully created reservation: id={} for user={} at time={}",
@@ -137,6 +133,16 @@ public class ReservationService {
             selectionSample.stop(meterRegistry.timer("reservation.slot.selection.time"));
         }
 
+        // 允许同一用户拥有多个未来预约，但候选时段不能与其 ACTIVE 预约重叠。
+        if (reservationRepository.existsOverlappingReservation(
+                user.getId(),
+                ReservationStatus.ACTIVE,
+                freshSlot.getStartTime(),
+                freshSlot.getEndTime())) {
+            logger.warn("Overlapping reservation attempt detected for user: {}", user.getEmail());
+            throw new DuplicateReservationException("User already has an overlapping active reservation");
+        }
+
         freshSlot.setReserved(true);
         // 保存时 Hibernate 会校验 Auditable.version，避免静默覆盖其他事务的更新。
         AvailableSlot savedSlot = timeSlotRepository.save(freshSlot);
@@ -148,6 +154,7 @@ public class ReservationService {
         reservation.setUser(user);
         reservation.setAvailableSlot(savedSlot);
         reservation.setReservedAt(LocalDateTime.now());
+        reservation.setStatus(ReservationStatus.ACTIVE);
 
         try {
             // 立即 flush，让用户/时段唯一约束异常在本方法内出现并转换为业务异常。
@@ -156,13 +163,13 @@ public class ReservationService {
                 saved.getId(), user.getEmail(), savedSlot.getId());
             return saved;
         } catch (DataIntegrityViolationException e) {
-            logger.warn("Database rejected duplicate reservation for user {}", user.getEmail());
-            throw new DuplicateReservationException("User or time slot already has an active reservation");
+            logger.warn("Database rejected duplicate active reservation for slot {}", savedSlot.getId());
+            throw new DuplicateReservationException("Time slot already has an active reservation");
         }
     }
 
     /**
-     * 根据预约 ID 取消预约：释放时段、删除预约记录并清除最近时段缓存。
+     * 根据预约 ID 取消预约：校验状态和开始时间，释放时段并保留历史记录。
      *
      * @param id 预约主键
      * @throws BusinessException 找不到预约时抛出
@@ -173,12 +180,24 @@ public class ReservationService {
         Reservation reservation = reservationRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("Reservation not found for id: " + id));
 
+        if (reservation.getStatus() != ReservationStatus.ACTIVE) {
+            throw new BusinessException("Only active reservations can be cancelled");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (!reservation.getAvailableSlot().getStartTime().isAfter(now)) {
+            throw new BusinessException("Reservation cannot be cancelled after the slot has started");
+        }
+
         AvailableSlot slot = reservation.getAvailableSlot();
         slot.setReserved(false);
         timeSlotRepository.save(slot);
         logger.info("Slot {} freed from reservation {}", slot.getId(), id);
 
-        reservationRepository.delete(reservation);
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservation.setCancelledAt(now);
+        reservation.setCancelReason("Cancelled by user");
+        reservationRepository.saveAndFlush(reservation);
         logger.info("Reservation {} cancelled", id);
 
         meterRegistry.counter("reservation.cancelled").increment();

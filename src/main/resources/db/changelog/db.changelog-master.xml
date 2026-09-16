@@ -10,5 +10,6 @@
     <include file="/db/changelog/changeset-002-dev-data.xml"/>
     <include file="/db/changelog/changeset-003-concurrency-constraints.xml"/>
     <include file="/db/changelog/changeset-004-resource-domain.xml"/>
+    <include file="/db/changelog/changeset-005-reservation-lifecycle.xml"/>
 
 </databaseChangeLog>

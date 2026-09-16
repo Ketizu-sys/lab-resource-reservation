@@ -5,13 +5,14 @@ import com.azki.reservation.entity.User;
 import com.azki.reservation.entity.Resource;
 import com.azki.reservation.entity.ResourceStatus;
 import com.azki.reservation.entity.ResourceType;
-import com.azki.reservation.exception.DuplicateReservationException;
+import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.ResourceRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -24,10 +25,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/** 验证并发请求最终仍受数据库唯一约束保护。 */
+/** 验证并发请求下的时段唯一性和用户时间重叠规则。 */
 @SpringBootTest
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
@@ -49,8 +51,15 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
     @Autowired
     private ResourceRepository resourceRepository;
 
+    @BeforeEach
+    void clearReservationData() {
+        reservationRepository.deleteAll();
+        timeSlotRepository.deleteAll();
+        resourceRepository.deleteAll();
+    }
+
     @Test
-    void concurrentRequestsForSameUserShouldCreateOnlyOneReservation() throws Exception {
+    void concurrentNonOverlappingRequestsForSameUserShouldBothSucceed() throws Exception {
         String email = "concurrent-user@example.com";
         User user = new User();
         user.setEmail(email);
@@ -74,8 +83,64 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
                 .filter(Boolean::booleanValue)
                 .count();
 
+            assertEquals(2, successes);
+        }
+    }
+
+    @Test
+    void concurrentOverlappingRequestsForSameUserShouldCreateOnlyOneReservation() throws Exception {
+        String email = "overlap-user@example.com";
+        User user = new User();
+        user.setEmail(email);
+        user.setUserName("overlap-user");
+        user.setPassword("encoded-password");
+        userRepository.saveAndFlush(user);
+
+        LocalDateTime firstStart = LocalDateTime.now().plusHours(3);
+        Resource resource = resourceRepository.saveAndFlush(resource());
+        AvailableSlot first = slot(firstStart, resource);
+        AvailableSlot second = slot(firstStart.plusMinutes(15), resource);
+        timeSlotRepository.saveAllAndFlush(List.of(first, second));
+        long before = reservationRepository.count();
+
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, email));
+            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, email));
+            start.countDown();
+
+            long successes = List.of(firstResult.get(), secondResult.get()).stream()
+                    .filter(Boolean::booleanValue)
+                    .count();
+
             assertEquals(1, successes);
-            assertEquals(1, reservationRepository.count());
+            assertEquals(before + 1, reservationRepository.count());
+        }
+    }
+
+    @Test
+    void concurrentRequestsForSameSlotShouldCreateOnlyOneReservation() throws Exception {
+        String firstEmail = "slot-first@example.com";
+        String secondEmail = "slot-second@example.com";
+        userRepository.saveAndFlush(user(firstEmail, "slot-first"));
+        userRepository.saveAndFlush(user(secondEmail, "slot-second"));
+
+        Resource resource = resourceRepository.saveAndFlush(resource());
+        timeSlotRepository.saveAndFlush(slot(LocalDateTime.now().plusHours(5), resource));
+        long before = reservationRepository.count();
+
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Boolean> firstResult = executor.submit(() -> reserveAfterSignal(start, firstEmail));
+            Future<Boolean> secondResult = executor.submit(() -> reserveAfterSignal(start, secondEmail));
+            start.countDown();
+
+            long successes = List.of(firstResult.get(), secondResult.get()).stream()
+                    .filter(Boolean::booleanValue)
+                    .count();
+
+            assertEquals(1, successes);
+            assertEquals(before + 1, reservationRepository.count());
         }
     }
 
@@ -84,9 +149,17 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
         try {
             reservationService.reserveNearestSlot(email);
             return true;
-        } catch (DuplicateReservationException e) {
+        } catch (BusinessException e) {
             return false;
         }
+    }
+
+    private User user(String email, String userName) {
+        User user = new User();
+        user.setEmail(email);
+        user.setUserName(userName);
+        user.setPassword("encoded-password");
+        return user;
     }
 
     private AvailableSlot slot(LocalDateTime start, Resource resource) {
@@ -100,7 +173,7 @@ class ReservationConcurrencyIntegrationTest extends ContainerIntegrationTestSupp
 
     private Resource resource() {
         Resource resource = new Resource();
-        resource.setName("concurrency-resource");
+        resource.setName("concurrency-resource-" + UUID.randomUUID());
         resource.setType(ResourceType.LAB);
         resource.setLocation("test-location");
         resource.setStatus(ResourceStatus.ACTIVE);

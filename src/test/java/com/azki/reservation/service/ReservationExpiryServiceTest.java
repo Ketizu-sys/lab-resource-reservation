@@ -2,9 +2,9 @@ package com.azki.reservation.service;
 
 import com.azki.reservation.entity.AvailableSlot;
 import com.azki.reservation.entity.Reservation;
+import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.entity.User;
 import com.azki.reservation.repository.ReservationRepository;
-import com.azki.reservation.repository.TimeSlotRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -18,10 +18,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /** 验证过期预约任务的调度单位，防止“分钟”被误写成“秒”。 */
 @ExtendWith(MockitoExtension.class)
@@ -29,12 +28,6 @@ class ReservationExpiryServiceTest {
 
     @Mock
     private ReservationRepository reservationRepository;
-
-    @Mock
-    private TimeSlotRepository timeSlotRepository;
-
-    @Mock
-    private CacheableOperations cacheableOperations;
 
     @InjectMocks
     private ReservationExpiryService reservationExpiryService;
@@ -50,7 +43,7 @@ class ReservationExpiryServiceTest {
     }
 
     @Test
-    void shouldReleaseSlotDeleteReservationAndEvictCache() {
+    void shouldCompleteReservationWithoutReopeningSlotOrDeletingHistory() {
         AvailableSlot slot = new AvailableSlot();
         slot.setId(2L);
         slot.setReserved(true);
@@ -60,15 +53,17 @@ class ReservationExpiryServiceTest {
         reservation.setId(1L);
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
+        reservation.setStatus(ReservationStatus.ACTIVE);
 
-        when(reservationRepository.findExpiredReservations(any(LocalDateTime.class)))
+        when(reservationRepository.findExpiredReservations(any(LocalDateTime.class), eq(ReservationStatus.ACTIVE)))
             .thenReturn(List.of(reservation));
 
         reservationExpiryService.processExpiredReservations();
 
-        assertFalse(slot.isReserved());
-        verify(timeSlotRepository).save(slot);
-        verify(reservationRepository).delete(reservation);
-        verify(cacheableOperations).evictNextSlotCache();
+        assertEquals(ReservationStatus.COMPLETED, reservation.getStatus());
+        assertNotNull(reservation.getCompletedAt());
+        assertEquals(true, slot.isReserved());
+        verify(reservationRepository).save(reservation);
+        verify(reservationRepository, never()).delete(any());
     }
 }
