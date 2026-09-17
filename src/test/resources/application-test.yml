@@ -8,6 +8,9 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  datasource:
+    hikari:
+      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
   # 表结构只由 Liquibase 创建；test context 不加载开发演示数据。
   liquibase:
     enabled: true
@@ -24,6 +27,7 @@ logging:
     org.hibernate.SQL: INFO
 
 reservation:
+  time-zone: Asia/Shanghai
   # 集成测试直接控制队列消费时机，禁止后台定时线程抢先处理测试消息。
   scheduling:
     enabled: false

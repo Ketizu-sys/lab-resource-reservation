@@ -19,6 +19,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -65,7 +66,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         Reservation reservation = new Reservation();
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
-        reservation.setReservedAt(now);
+        reservation.setReservedAt(Instant.now());
         entityManager.persist(reservation);
 
         entityManager.flush();
@@ -105,7 +106,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         Reservation reservation = new Reservation();
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
-        reservation.setReservedAt(pastTime);
+        reservation.setReservedAt(Instant.now().minusSeconds(7_200));
         entityManager.persist(reservation);
 
         entityManager.flush();
@@ -124,11 +125,11 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
 
         User expiredUser = createUser("expired@example.com");
         AvailableSlot expiredSlot = createSlot(now.minusHours(2), now.minusHours(1));
-        Reservation expiredReservation = createReservation(expiredUser, expiredSlot, now.minusDays(7));
+        Reservation expiredReservation = createReservation(expiredUser, expiredSlot, Instant.now().minusSeconds(604_800));
 
         User futureUser = createUser("future@example.com");
         AvailableSlot futureSlot = createSlot(now.plusDays(2), now.plusDays(2).plusHours(1));
-        createReservation(futureUser, futureSlot, now.minusDays(7));
+        createReservation(futureUser, futureSlot, Instant.now().minusSeconds(604_800));
 
         entityManager.flush();
         entityManager.clear();
@@ -147,13 +148,13 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         User secondUser = createUser("replacement@example.com");
         AvailableSlot slot = createSlot(now.minusHours(2), now.minusHours(1));
 
-        Reservation cancelled = createReservation(firstUser, slot, now.minusDays(1));
+        Reservation cancelled = createReservation(firstUser, slot, Instant.now().minusSeconds(86_400));
         cancelled.setStatus(ReservationStatus.CANCELLED);
-        cancelled.setCancelledAt(now.minusHours(3));
+        cancelled.setCancelledAt(Instant.now().minusSeconds(10_800));
         // IDENTITY 主键会在 persist 时立即插入；先刷新状态变更，再创建同一时段的新预约。
         entityManager.flush();
 
-        Reservation replacement = createReservation(secondUser, slot, now.minusHours(2));
+        Reservation replacement = createReservation(secondUser, slot, Instant.now().minusSeconds(7_200));
         entityManager.flush();
         entityManager.clear();
 
@@ -191,7 +192,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         return entityManager.persist(resource);
     }
 
-    private Reservation createReservation(User user, AvailableSlot slot, LocalDateTime reservedAt) {
+    private Reservation createReservation(User user, AvailableSlot slot, Instant reservedAt) {
         Reservation reservation = new Reservation();
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);

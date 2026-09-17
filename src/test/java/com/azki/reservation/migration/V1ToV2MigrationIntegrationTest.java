@@ -35,10 +35,17 @@ class V1ToV2MigrationIntegrationTest {
 
         migrate(dataSource, "classpath:db/changelog/db.changelog-master.xml");
 
-        assertEquals(3, jdbc.queryForObject(
+        assertEquals(4, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM z_liq_changelog WHERE id IN " +
-                        "('4-introduce-resource-domain', '5-reservation-lifecycle', '6-add-user-role')",
+                        "('4-introduce-resource-domain', '5-reservation-lifecycle', " +
+                        "'6-add-user-role', '7-unify-time-semantics')",
                 Integer.class));
+        assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "reserved_at"));
+        assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "created_date"));
+        assertEquals("timestamp with time zone", columnType(jdbc, "users", "created_date"));
+        assertEquals("timestamp without time zone", columnType(jdbc, "available_slot", "start_time"));
+        assertEquals("timestamp without time zone", columnType(jdbc, "available_slot", "end_time"));
+        assertEquals("Asia/Shanghai", jdbc.queryForObject("SHOW TimeZone", String.class));
         assertEquals(1, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM resource WHERE name = '默认实验室资源'", Integer.class));
         assertEquals(0, jdbc.queryForObject(
@@ -118,6 +125,14 @@ class V1ToV2MigrationIntegrationTest {
         dataSource.setUsername(POSTGRES.getUsername());
         dataSource.setPassword(POSTGRES.getPassword());
         return dataSource;
+    }
+
+    private String columnType(JdbcTemplate jdbc, String table, String column) {
+        return jdbc.queryForObject("""
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
     }
 
     private void migrate(DataSource dataSource, String changeLog) throws Exception {

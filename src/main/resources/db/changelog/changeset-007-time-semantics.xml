@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+      Slot 起止时间是用户输入的上海本地业务时间，继续保留 timestamp without time zone。
+      审计与预约生命周期字段代表绝对时刻：把旧 UTC 数值解释为 UTC 后改为 timestamptz。
+    -->
+    <changeSet id="7-unify-time-semantics" author="Hu">
+        <sql splitStatements="false" stripComments="false"><![CDATA[
+            DO $$
+            BEGIN
+                EXECUTE format(
+                    'ALTER DATABASE %I SET timezone TO %L',
+                    current_database(),
+                    'Asia/Shanghai'
+                );
+            END $$;
+        ]]></sql>
+
+        <sql><![CDATA[
+            ALTER TABLE users
+                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
+                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+
+            ALTER TABLE resource
+                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
+                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+
+            ALTER TABLE available_slot
+                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
+                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+
+            ALTER TABLE reservation
+                ALTER COLUMN reserved_at TYPE TIMESTAMPTZ USING reserved_at AT TIME ZONE 'UTC',
+                ALTER COLUMN cancelled_at TYPE TIMESTAMPTZ USING cancelled_at AT TIME ZONE 'UTC',
+                ALTER COLUMN completed_at TYPE TIMESTAMPTZ USING completed_at AT TIME ZONE 'UTC',
+                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
+                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+        ]]></sql>
+    </changeSet>
+</databaseChangeLog>

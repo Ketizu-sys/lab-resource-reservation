@@ -12,5 +12,6 @@
     <include file="/db/changelog/changeset-004-resource-domain.xml"/>
     <include file="/db/changelog/changeset-005-reservation-lifecycle.xml"/>
     <include file="/db/changelog/changeset-006-user-role.xml"/>
+    <include file="/db/changelog/changeset-007-time-semantics.xml"/>
 
 </databaseChangeLog>

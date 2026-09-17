@@ -20,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -53,7 +55,8 @@ class ReservationServiceTest {
                 reservationRepository,
                 userRepository,
                 meterRegistry,
-                cacheableOperations
+                cacheableOperations,
+                Clock.system(ZoneId.of("Asia/Shanghai"))
         );
     }
 

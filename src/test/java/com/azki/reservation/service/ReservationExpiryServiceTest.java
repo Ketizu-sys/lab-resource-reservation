@@ -7,13 +7,14 @@ import com.azki.reservation.entity.User;
 import com.azki.reservation.repository.ReservationRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.lang.reflect.Method;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -29,8 +30,14 @@ class ReservationExpiryServiceTest {
     @Mock
     private ReservationRepository reservationRepository;
 
-    @InjectMocks
     private ReservationExpiryService reservationExpiryService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        reservationExpiryService = new ReservationExpiryService(
+                reservationRepository,
+                Clock.system(ZoneId.of("Asia/Shanghai")));
+    }
 
     @Test
     void shouldInterpretExpiryCheckIntervalAsMinutes() throws NoSuchMethodException {

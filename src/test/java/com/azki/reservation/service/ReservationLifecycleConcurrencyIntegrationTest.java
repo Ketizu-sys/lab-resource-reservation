@@ -130,7 +130,7 @@ class ReservationLifecycleConcurrencyIntegrationTest extends ContainerIntegratio
         Reservation reservation = new Reservation();
         reservation.setUser(user);
         reservation.setAvailableSlot(slot);
-        reservation.setReservedAt(LocalDateTime.now());
+        reservation.setReservedAt(java.time.Instant.now());
         reservation.setStatus(ReservationStatus.ACTIVE);
         return reservations.saveAndFlush(reservation);
     }

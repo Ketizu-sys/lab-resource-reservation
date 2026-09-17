@@ -5,7 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.proxy.HibernateProxy;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Objects;
 
 @Getter
@@ -31,7 +31,7 @@ public class Reservation extends Auditable{
     private AvailableSlot availableSlot;
 
     @Column(name = "reserved_at", nullable = false)
-    private LocalDateTime reservedAt;
+    private Instant reservedAt;
 
     /** 当前生命周期状态；新建预约默认处于有效状态。 */
     @Enumerated(EnumType.STRING)
@@ -40,11 +40,11 @@ public class Reservation extends Auditable{
 
     /** 用户取消预约的时间，仅 CANCELLED 状态使用。 */
     @Column(name = "cancelled_at")
-    private LocalDateTime cancelledAt;
+    private Instant cancelledAt;
 
     /** 预约自然结束并转为 COMPLETED 的时间。 */
     @Column(name = "completed_at")
-    private LocalDateTime completedAt;
+    private Instant completedAt;
 
     /** 取消原因；当前取消接口未接收原因时写入默认说明。 */
     @Column(name = "cancel_reason", length = 500)

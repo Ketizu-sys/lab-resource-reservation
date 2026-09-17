@@ -7,6 +7,9 @@ spring:
     url: jdbc:postgresql://localhost:5432/reservationdb
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD}
+    hikari:
+      # 每条应用数据库连接都以业务时区呈现 timestamptz 字段。
+      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
   # Redis 同时承载缓存、请求队列、请求状态和用户排队去重集合。
   data:
     redis:
@@ -34,6 +37,8 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.xml
     enabled: true
 reservation:
+  # Slot 使用上海本地业务时间；生命周期字段以绝对时刻保存后按此时区展示。
+  time-zone: Asia/Shanghai
   # 高负载模式下的 Redis 队列批处理参数。
   queue:
     batch-size: 50

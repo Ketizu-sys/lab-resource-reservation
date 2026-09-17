@@ -77,8 +77,8 @@ class UserReservationLifecycleIntegrationTest extends ContainerIntegrationTestSu
         AvailableSlot s = new AvailableSlot(); s.setResource(resource); s.setStartTime(LocalDateTime.now().plusHours(hours));
         s.setEndTime(s.getStartTime().plusHours(1)); s.setReserved(status == ReservationStatus.ACTIVE);
         s = slots.saveAndFlush(s);
-        Reservation r = new Reservation(); r.setUser(user); r.setAvailableSlot(s); r.setReservedAt(LocalDateTime.now());
-        r.setStatus(status); if (status == ReservationStatus.CANCELLED) r.setCancelledAt(LocalDateTime.now());
+        Reservation r = new Reservation(); r.setUser(user); r.setAvailableSlot(s); r.setReservedAt(java.time.Instant.now());
+        r.setStatus(status); if (status == ReservationStatus.CANCELLED) r.setCancelledAt(java.time.Instant.now());
         return reservations.saveAndFlush(r);
     }
 }

@@ -9,6 +9,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -25,9 +27,11 @@ public class ReservationExpiryService {
     private static final Logger logger = LoggerFactory.getLogger(ReservationExpiryService.class);
 
     private final ReservationRepository reservationRepository;
+    private final Clock reservationClock;
 
-    public ReservationExpiryService(ReservationRepository reservationRepository) {
+    public ReservationExpiryService(ReservationRepository reservationRepository, Clock reservationClock) {
         this.reservationRepository = reservationRepository;
+        this.reservationClock = reservationClock;
     }
 
     /**
@@ -42,7 +46,8 @@ public class ReservationExpiryService {
     public void processExpiredReservations() {
         logger.info("Starting expired reservations check");
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(reservationClock);
+        Instant completedAt = Instant.now(reservationClock);
         List<Reservation> expiredReservations =
             reservationRepository.findExpiredReservationsForUpdate(now);
 
@@ -55,7 +60,7 @@ public class ReservationExpiryService {
 
         for (Reservation reservation : expiredReservations) {
             reservation.setStatus(ReservationStatus.COMPLETED);
-            reservation.setCompletedAt(now);
+            reservation.setCompletedAt(completedAt);
             reservationRepository.save(reservation);
 
             logger.info("Expired reservation completed: id={}, user={}, slot={}",

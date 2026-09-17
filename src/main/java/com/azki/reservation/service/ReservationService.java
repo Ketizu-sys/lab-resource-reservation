@@ -27,6 +27,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -45,6 +47,7 @@ public class ReservationService {
     private final UserRepository userRepository;
     private final MeterRegistry meterRegistry;
     private final CacheableOperations cacheableOperations;
+    private final Clock reservationClock;
 
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final Logger logger = LoggerFactory.getLogger(ReservationService.class);
@@ -55,7 +58,7 @@ public class ReservationService {
      * @return 最近空闲时段；没有候选时返回空 Optional
      */
     public Optional<AvailableSlot> findNextAvailableSlotCached() {
-        return cacheableOperations.findNextAvailableSlotCached(LocalDateTime.now());
+        return cacheableOperations.findNextAvailableSlotCached(LocalDateTime.now(reservationClock));
     }
 
     /**
@@ -139,7 +142,7 @@ public class ReservationService {
         Timer.Sample selectionSample = Timer.start(meterRegistry);
         AvailableSlot freshSlot;
         try {
-            freshSlot = timeSlotRepository.findNextAvailableForUpdate(LocalDateTime.now())
+            freshSlot = timeSlotRepository.findNextAvailableForUpdate(LocalDateTime.now(reservationClock))
                     .orElseThrow(() -> new ReservationNotAvailableException("No available time slots"));
         } finally {
             selectionSample.stop(meterRegistry.timer("reservation.slot.selection.time"));
@@ -172,7 +175,7 @@ public class ReservationService {
         Reservation reservation = new Reservation();
         reservation.setUser(user);
         reservation.setAvailableSlot(savedSlot);
-        reservation.setReservedAt(LocalDateTime.now());
+        reservation.setReservedAt(Instant.now(reservationClock));
         reservation.setStatus(ReservationStatus.ACTIVE);
 
         try {
@@ -196,7 +199,7 @@ public class ReservationService {
         if (slot.getResource() != null && slot.getResource().getStatus() != ResourceStatus.ACTIVE) {
             throw new ReservationNotAvailableException("Resource is not active");
         }
-        if (!slot.getStartTime().isAfter(LocalDateTime.now())) {
+        if (!slot.getStartTime().isAfter(LocalDateTime.now(reservationClock))) {
             throw new ReservationNotAvailableException("Time slot has already started");
         }
         if (slot.isReserved()) {
@@ -237,8 +240,8 @@ public class ReservationService {
             throw new BusinessException("Only active reservations can be cancelled");
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        if (!reservation.getAvailableSlot().getStartTime().isAfter(now)) {
+        LocalDateTime businessNow = LocalDateTime.now(reservationClock);
+        if (!reservation.getAvailableSlot().getStartTime().isAfter(businessNow)) {
             throw new BusinessException("Reservation cannot be cancelled after the slot has started");
         }
 
@@ -248,7 +251,7 @@ public class ReservationService {
         logger.info("Slot {} freed from reservation {}", slot.getId(), id);
 
         reservation.setStatus(ReservationStatus.CANCELLED);
-        reservation.setCancelledAt(now);
+        reservation.setCancelledAt(Instant.now(reservationClock));
         reservation.setCancelReason(reason);
         reservationRepository.saveAndFlush(reservation);
         logger.info("Reservation {} cancelled", id);
