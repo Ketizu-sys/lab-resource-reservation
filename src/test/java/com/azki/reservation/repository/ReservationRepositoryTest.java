@@ -133,7 +133,7 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.flush();
         entityManager.clear();
 
-        List<Reservation> result = reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE);
+        List<Reservation> result = reservationRepository.findExpiredReservationsForUpdate(now);
 
         assertEquals(1, result.size());
         assertEquals(expiredReservation.getId(), result.get(0).getId());
@@ -158,9 +158,9 @@ class ReservationRepositoryTest extends ContainerIntegrationTestSupport {
         entityManager.clear();
 
         assertNotNull(replacement.getId());
-        assertTrue(reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE)
+        assertTrue(reservationRepository.findExpiredReservationsForUpdate(now)
                 .stream().anyMatch(r -> r.getId().equals(replacement.getId())));
-        assertTrue(reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE)
+        assertTrue(reservationRepository.findExpiredReservationsForUpdate(now)
                 .stream().noneMatch(r -> r.getId().equals(cancelled.getId())));
     }
 

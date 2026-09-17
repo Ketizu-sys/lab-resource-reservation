@@ -55,7 +55,7 @@ class ReservationExpiryServiceTest {
         reservation.setAvailableSlot(slot);
         reservation.setStatus(ReservationStatus.ACTIVE);
 
-        when(reservationRepository.findExpiredReservations(any(LocalDateTime.class), eq(ReservationStatus.ACTIVE)))
+        when(reservationRepository.findExpiredReservationsForUpdate(any(LocalDateTime.class)))
             .thenReturn(List.of(reservation));
 
         reservationExpiryService.processExpiredReservations();

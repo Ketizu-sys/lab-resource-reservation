@@ -53,9 +53,17 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long>,
      * @param now 本次清理任务的当前时间
      * @return 结束时间早于当前时间的预约
      */
-    @Query("SELECT r FROM Reservation r JOIN FETCH r.availableSlot a " +
-           "WHERE r.status = :status AND a.endTime < :now")
-    List<Reservation> findExpiredReservations(
-            @Param("now") LocalDateTime now,
-            @Param("status") ReservationStatus status);
+    /**
+     * 领取本轮需要完成的预约。只锁 reservation 行并跳过其他事务正在处理的记录，
+     * 与取消流程的“先锁预约、后更新时段”顺序保持一致。
+     */
+    @Query(value = """
+            SELECT r.*
+            FROM reservation r
+            JOIN available_slot s ON s.id = r.available_slot_id
+            WHERE r.status = 'ACTIVE' AND s.end_time < :now
+            ORDER BY r.id
+            FOR UPDATE OF r SKIP LOCKED
+            """, nativeQuery = true)
+    List<Reservation> findExpiredReservationsForUpdate(@Param("now") LocalDateTime now);
 }

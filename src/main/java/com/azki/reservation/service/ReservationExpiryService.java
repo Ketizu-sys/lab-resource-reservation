@@ -44,7 +44,7 @@ public class ReservationExpiryService {
 
         LocalDateTime now = LocalDateTime.now();
         List<Reservation> expiredReservations =
-            reservationRepository.findExpiredReservations(now, ReservationStatus.ACTIVE);
+            reservationRepository.findExpiredReservationsForUpdate(now);
 
         if (expiredReservations.isEmpty()) {
             logger.info("No expired reservations found");
@@ -54,18 +54,13 @@ public class ReservationExpiryService {
         logger.info("Found {} expired reservations to process", expiredReservations.size());
 
         for (Reservation reservation : expiredReservations) {
-            try {
-                reservation.setStatus(ReservationStatus.COMPLETED);
-                reservation.setCompletedAt(now);
-                reservationRepository.save(reservation);
+            reservation.setStatus(ReservationStatus.COMPLETED);
+            reservation.setCompletedAt(now);
+            reservationRepository.save(reservation);
 
-                logger.info("Expired reservation completed: id={}, user={}, slot={}",
-                    reservation.getId(), reservation.getUser().getEmail(),
-                    reservation.getAvailableSlot().getId());
-
-            } catch (Exception e) {
-                logger.error("Error processing expired reservation {}", reservation.getId(), e);
-            }
+            logger.info("Expired reservation completed: id={}, user={}, slot={}",
+                reservation.getId(), reservation.getUser().getEmail(),
+                reservation.getAvailableSlot().getId());
         }
 
         logger.info("Completed expired reservations update, processed {} reservations",
