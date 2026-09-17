@@ -1,6 +1,7 @@
 package com.azki.reservation.service;
 
 import com.azki.reservation.dto.reservation.ReservationRequestDto;
+import com.azki.reservation.dto.reservation.ReservationMode;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -51,7 +52,7 @@ class ReservationQueueServiceTest {
         // 准备：构造合法预约请求。
         ReservationRequestDto request = new ReservationRequestDto();
         request.setUserId(1L);
-        request.setEmail("test@example.com");
+        request.setMode(ReservationMode.AUTO);
         when(redisTemplate.execute(
             any(RedisScript.class), anyList(), any(), any(), any(), any()
         )).thenReturn(1L);
@@ -63,8 +64,8 @@ class ReservationQueueServiceTest {
         assertNotNull(requestId);
         verify(redisTemplate).execute(
             any(RedisScript.class),
-            argThat(keys -> keys.contains("reservation:queue") && keys.contains("reservation:emails:queued")),
-            eq("test@example.com"), anyString(),
+            argThat(keys -> keys.contains("reservation:queue") && keys.contains("reservation:users:queued")),
+            eq("1"), anyString(),
             eq(ReservationQueueService.RequestStatus.QUEUED.name()), anyLong()
         );
     }
@@ -120,7 +121,7 @@ class ReservationQueueServiceTest {
         // 准备：同一邮箱已经存在于排队集合。
         ReservationRequestDto request = new ReservationRequestDto();
         request.setUserId(1L);
-        request.setEmail("test@example.com");
+        request.setMode(ReservationMode.AUTO);
 
         when(redisTemplate.execute(
             any(RedisScript.class), anyList(), any(), any(), any(), any()
@@ -130,7 +131,7 @@ class ReservationQueueServiceTest {
         assertThrows(DuplicateReservationException.class, () -> queueService.enqueueReservationRequest(request));
 
         verify(redisTemplate).execute(
-            any(RedisScript.class), anyList(), eq("test@example.com"),
+            any(RedisScript.class), anyList(), eq("1"),
             anyString(), eq(ReservationQueueService.RequestStatus.QUEUED.name()), anyLong()
         );
     }

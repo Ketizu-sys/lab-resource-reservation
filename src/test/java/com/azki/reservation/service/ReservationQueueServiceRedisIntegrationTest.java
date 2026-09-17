@@ -1,6 +1,7 @@
 package com.azki.reservation.service;
 
 import com.azki.reservation.dto.reservation.ReservationRequestDto;
+import com.azki.reservation.dto.reservation.ReservationMode;
 import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -48,7 +50,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
 
     @Test
     void shouldAtomicallyRejectDuplicateEmail() {
-        ReservationRequestDto request = request("same@example.com");
+        ReservationRequestDto request = request(1L);
 
         queueService.enqueueReservationRequest(request);
 
@@ -61,9 +63,9 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
 
     @Test
     void retryingFirstMessageShouldNotOverwriteSecondMessage() {
-        String firstId = queueService.enqueueReservationRequest(request("first@example.com"));
-        String secondId = queueService.enqueueReservationRequest(request("second@example.com"));
-        when(reservationService.reserveNearestSlot(userId("first@example.com")))
+        String firstId = queueService.enqueueReservationRequest(request(1L));
+        String secondId = queueService.enqueueReservationRequest(request(2L));
+        when(reservationService.reserveNearestSlot(1L))
             .thenThrow(new BusinessException("temporary failure"))
             .thenReturn(null);
 
@@ -79,9 +81,9 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
 
     @Test
     void exhaustedMessageShouldMoveToDlqWithoutDeletingNextMessage() {
-        String failingId = queueService.enqueueReservationRequest(request("failing@example.com"));
-        String healthyId = queueService.enqueueReservationRequest(request("healthy@example.com"));
-        when(reservationService.reserveNearestSlot(userId("failing@example.com")))
+        String failingId = queueService.enqueueReservationRequest(request(3L));
+        String healthyId = queueService.enqueueReservationRequest(request(4L));
+        when(reservationService.reserveNearestSlot(3L))
             .thenThrow(new BusinessException("temporary failure"));
 
         queueService.processReservationQueue();
@@ -118,14 +120,24 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         assertEquals(0, queueService.getProcessingLength());
     }
 
-    private ReservationRequestDto request(String email) {
+    private ReservationRequestDto request(Long userId) {
         ReservationRequestDto request = new ReservationRequestDto();
-        request.setUserId(userId(email));
-        request.setEmail(email);
+        request.setUserId(userId);
+        request.setMode(ReservationMode.AUTO);
         return request;
     }
 
-    private long userId(String email) {
-        return Integer.toUnsignedLong(email.hashCode());
+    @Test
+    void manualQueueMessageShouldCallUnifiedManualReservationEntry() {
+        ReservationRequestDto manual = request(9L);
+        manual.setMode(ReservationMode.MANUAL);
+        manual.setSlotId(42L);
+        String requestId = queueService.enqueueReservationRequest(manual);
+
+        queueService.processReservationQueue();
+
+        verify(reservationService).reserveSlot(9L, 42L);
+        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(requestId));
+        assertEquals(0, queueService.getProcessingLength());
     }
 }

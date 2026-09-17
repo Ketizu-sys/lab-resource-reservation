@@ -1,5 +1,6 @@
 package com.azki.reservation.dto.reservation;
 
+import com.azki.reservation.entity.ResourceType;
 import lombok.Data;
 
 @Data
@@ -9,5 +10,7 @@ import lombok.Data;
  */
 public class ReservationRequestDto {
     private Long userId;
-    private String email;
+    private Long slotId;
+    private ResourceType resourceType;
+    private ReservationMode mode = ReservationMode.AUTO;
 }

@@ -63,7 +63,7 @@ class ReservationControllerTest {
         assertEquals(requestId, response.getBody().getRequestId());
         assertEquals("QUEUED", response.getBody().getStatus());
         verify(reservationQueueService).enqueueReservationRequest(argThat(request ->
-                request.getUserId().equals(1L) && request.getEmail().equals("test@example.com")));
+                request.getUserId().equals(1L) && request.getMode() == com.azki.reservation.dto.reservation.ReservationMode.AUTO));
         verify(loadMonitoringService).incrementActiveRequests();
         verify(loadMonitoringService).decrementActiveRequests();
     }

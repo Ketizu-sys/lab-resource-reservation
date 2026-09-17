@@ -4,6 +4,7 @@ import com.azki.reservation.dto.reservation.ReservationRequestDto;
 import com.azki.reservation.dto.reservation.ReservationResponseDto;
 import com.azki.reservation.dto.reservation.ManualReservationRequest;
 import com.azki.reservation.dto.reservation.ReservationDetailsDto;
+import com.azki.reservation.dto.reservation.ReservationMode;
 import com.azki.reservation.entity.Reservation;
 import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationQueueService;
@@ -85,7 +86,7 @@ public class ReservationController {
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
         ReservationRequestDto request = new ReservationRequestDto();
         request.setUserId(currentUser.id());
-        request.setEmail(currentUser.email());
+        request.setMode(ReservationMode.AUTO);
         try {
             // 先计入当前正在处理的请求；计数是 shouldQueueRequest() 的判断依据。
             loadMonitoringService.incrementActiveRequests();
@@ -93,13 +94,13 @@ public class ReservationController {
             // 超过并发阈值时快速返回 requestId，让后台队列慢慢消化请求。
             if (loadMonitoringService.shouldQueueRequest()) {
                 // 高负载路径：写入 Redis，HTTP 202 表示“已接收但尚未处理完成”。
-                logger.info("Processing reservation request for {} through queue due to high load", request.getEmail());
+                logger.info("Processing automatic reservation request for user {} through queue", currentUser.id());
                 String requestId = reservationQueueService.enqueueReservationRequest(request);
                 String status = reservationQueueService.getRequestStatus(requestId);
                 return ResponseEntity.accepted().body(new ReservationResponseDto(requestId, status));
             } else {
                 // 正常负载路径：在当前 HTTP 请求中完成选时段和数据库写入。
-                logger.info("Processing reservation request for {} directly", request.getEmail());
+                logger.info("Processing automatic reservation request for user {} directly", currentUser.id());
                 Reservation reservation = reservationService.reserveNearestSlot(currentUser.id());
                 String requestId = "direct-" + reservation.getId();
                 return ResponseEntity.ok().body(new ReservationResponseDto(requestId, "SUCCESS"));

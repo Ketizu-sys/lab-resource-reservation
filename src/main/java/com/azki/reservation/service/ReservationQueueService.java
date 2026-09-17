@@ -1,6 +1,7 @@
 package com.azki.reservation.service;
 
 import com.azki.reservation.dto.reservation.ReservationRequestDto;
+import com.azki.reservation.dto.reservation.ReservationMode;
 import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
@@ -36,7 +37,7 @@ public class ReservationQueueService {
     static final String QUEUE_KEY = "reservation:queue";
     static final String PROCESSING_KEY = "reservation:queue:processing";
     static final String DLQ_KEY = "reservation:dlq";
-    static final String EMAIL_SET_KEY = "reservation:emails:queued";
+    static final String USER_SET_KEY = "reservation:users:queued";
     static final String STATUS_KEY_PREFIX = "reservation:status:";
     private static final int MAX_ATTEMPTS = 3;
 
@@ -172,6 +173,10 @@ public class ReservationQueueService {
 
     /** 原子加入队列，避免并发请求同时通过“先查询、后写入”的去重检查。 */
     public String enqueueReservationRequest(ReservationRequestDto request) {
+        if (request == null || request.getUserId() == null || request.getMode() == null
+                || (request.getMode() == ReservationMode.MANUAL && request.getSlotId() == null)) {
+            throw new BusinessException("Invalid reservation queue request");
+        }
         String requestId = UUID.randomUUID().toString();
         String statusKey = STATUS_KEY_PREFIX + requestId;
 
@@ -179,24 +184,24 @@ public class ReservationQueueService {
             String json = objectMapper.writeValueAsString(new QueueItem(request, 0, requestId));
             Long result = redisTemplate.execute(
                 ENQUEUE_SCRIPT,
-                List.of(QUEUE_KEY, EMAIL_SET_KEY, statusKey),
-                request.getEmail(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
+                List.of(QUEUE_KEY, USER_SET_KEY, statusKey),
+                request.getUserId().toString(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
             );
 
             if (!Long.valueOf(1).equals(result)) {
-                throw new DuplicateReservationException("A reservation request for this email is already in queue");
+                throw new DuplicateReservationException("A reservation request for this user is already in queue");
             }
             return requestId;
         } catch (DuplicateReservationException e) {
             throw e;
         } catch (Exception e) {
-            logger.error("Failed to enqueue reservation request for email {}", request.getEmail(), e);
+            logger.error("Failed to enqueue reservation request for user {}", request.getUserId(), e);
             throw new BusinessException("Failed to process reservation request");
         }
     }
 
-    boolean isUserAlreadyInQueue(String email) {
-        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(EMAIL_SET_KEY, email));
+    boolean isUserAlreadyInQueue(Long userId) {
+        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(USER_SET_KEY, userId.toString()));
     }
 
     public String getRequestStatus(String requestId) {
@@ -271,15 +276,19 @@ public class ReservationQueueService {
 
             updateStatus(item.requestId, RequestStatus.PROCESSING);
             try {
-                reservationService.reserveNearestSlot(item.request.getUserId());
+                if (item.request.getMode() == ReservationMode.MANUAL) {
+                    reservationService.reserveSlot(item.request.getUserId(), item.request.getSlotId());
+                } else {
+                    reservationService.reserveNearestSlot(item.request.getUserId());
+                }
                 meterRegistry.counter("reservation.queue.processed").increment();
                 complete(claimed, RequestStatus.SUCCESS);
             } catch (DuplicateReservationException e) {
-                logger.info("Skipping duplicate reservation: {}", item.request.getEmail());
+                logger.info("Skipping duplicate reservation for user: {}", item.request.getUserId());
                 meterRegistry.counter("reservation.queue.duplicate").increment();
                 complete(claimed, RequestStatus.FAILED);
             } catch (ReservationNotAvailableException e) {
-                logger.info("No slots available for reservation: {}", item.request.getEmail());
+                logger.info("No slots available for user: {}", item.request.getUserId());
                 meterRegistry.counter("reservation.queue.no_slots").increment();
                 complete(claimed, RequestStatus.FAILED);
             } catch (ReservationCapacityExceededException e) {
@@ -294,7 +303,8 @@ public class ReservationQueueService {
 
     private boolean isValid(QueueItem item) {
         return item != null && item.requestId != null && item.request != null
-            && item.request.getUserId() != null && item.request.getEmail() != null;
+            && item.request.getUserId() != null && item.request.getMode() != null
+            && (item.request.getMode() != ReservationMode.MANUAL || item.request.getSlotId() != null);
     }
 
     private void updateStatus(String requestId, RequestStatus status) {
@@ -307,8 +317,8 @@ public class ReservationQueueService {
         QueueItem item = claimed.item();
         redisTemplate.execute(
             COMPLETE_SCRIPT,
-            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, EMAIL_SET_KEY),
-            claimed.rawJson(), status.name(), item.request.getEmail(), statusExpirySeconds()
+            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY),
+            claimed.rawJson(), status.name(), item.request.getUserId().toString(), statusExpirySeconds()
         );
     }
 
@@ -351,8 +361,8 @@ public class ReservationQueueService {
 
         Long moved = redisTemplate.execute(
             DLQ_SCRIPT,
-            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, EMAIL_SET_KEY),
-            claimed.rawJson(), dlqJson, RequestStatus.FAILED.name(), item.request.getEmail(),
+            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY),
+            claimed.rawJson(), dlqJson, RequestStatus.FAILED.name(), item.request.getUserId().toString(),
             statusExpirySeconds()
         );
         if (Long.valueOf(1).equals(moved)) {
