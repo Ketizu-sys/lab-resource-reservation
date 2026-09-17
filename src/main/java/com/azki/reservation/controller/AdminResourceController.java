@@ -1,8 +1,10 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.admin.AdminResourceRequest;
 import com.azki.reservation.dto.resource.ResourceResponseDto;
 import com.azki.reservation.service.AdminResourceService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/admin/resources")
 @RequiredArgsConstructor
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 public class AdminResourceController {
     private final AdminResourceService service;
 

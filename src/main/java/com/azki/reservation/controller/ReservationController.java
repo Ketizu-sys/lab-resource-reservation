@@ -11,7 +11,9 @@ import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.service.ReservationService;
 import com.azki.reservation.service.ReservationDtoMapper;
 import com.azki.reservation.service.UserReservationQueryService;
+import com.azki.reservation.config.OpenApiConfig;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,7 @@ import jakarta.validation.Valid;
  * 低负载时同步写数据库，高负载时把请求放进 Redis 队列。查询状态仅适用于排队请求。</p>
  */
 @Tag(name = "预约管理", description = "创建预约、查询排队状态和取消预约")
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 @RestController
 @RequestMapping("/api/v1/reservations")
 public class ReservationController {

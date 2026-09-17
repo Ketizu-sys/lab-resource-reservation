@@ -1,9 +1,11 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.slot.SlotResponseDto;
 import com.azki.reservation.entity.ResourceType;
 import com.azki.reservation.service.SlotQueryService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDateTime;
 
 @Tag(name = "可用时段", description = "查询当前仍可预约的资源时段")
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 @RestController
 @RequestMapping("/api/v1/slots")
 @RequiredArgsConstructor

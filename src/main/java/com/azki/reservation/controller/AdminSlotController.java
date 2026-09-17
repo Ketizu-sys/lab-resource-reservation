@@ -1,7 +1,9 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.admin.*;
 import com.azki.reservation.service.AdminSlotService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -14,6 +16,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/admin/slots")
 @RequiredArgsConstructor
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 public class AdminSlotController {
     private final AdminSlotService service;
 

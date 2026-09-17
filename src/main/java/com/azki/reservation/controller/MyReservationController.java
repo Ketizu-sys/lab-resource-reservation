@@ -1,10 +1,12 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.reservation.ReservationDetailsDto;
 import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.security.AuthenticatedUser;
 import com.azki.reservation.service.UserReservationQueryService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "我的预约", description = "查询当前用户自己的预约")
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 @RestController
 @RequestMapping("/api/v1/me/reservations")
 @RequiredArgsConstructor

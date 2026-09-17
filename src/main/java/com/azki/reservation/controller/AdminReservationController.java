@@ -1,8 +1,10 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.admin.AdminReservationResponse;
 import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.service.AdminReservationService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.*;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -13,6 +15,7 @@ import java.time.LocalDateTime;
 @RestController
 @RequestMapping("/api/v1/admin/reservations")
 @RequiredArgsConstructor
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 public class AdminReservationController {
     private final AdminReservationService service;
 

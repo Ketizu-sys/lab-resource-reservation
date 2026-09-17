@@ -1,10 +1,12 @@
 package com.azki.reservation.controller;
 
+import com.azki.reservation.config.OpenApiConfig;
 import com.azki.reservation.dto.resource.ResourceResponseDto;
 import com.azki.reservation.entity.ResourceStatus;
 import com.azki.reservation.entity.ResourceType;
 import com.azki.reservation.service.ResourceQueryService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/resources")
 @RequiredArgsConstructor
 @Tag(name = "资源查询", description = "查询当前可预约的实验室资源")
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 public class ResourceController {
 
     private final ResourceQueryService resourceQueryService;
