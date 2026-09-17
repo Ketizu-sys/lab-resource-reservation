@@ -52,7 +52,7 @@ class ReservationControllerTest {
         when(loadMonitoringService.shouldQueueRequest()).thenReturn(true);
         when(reservationQueueService.enqueueReservationRequest(any(ReservationRequestDto.class)))
                 .thenReturn(requestId);
-        when(reservationQueueService.getRequestStatus(requestId)).thenReturn("QUEUED");
+        when(reservationQueueService.getRequestStatus(requestId, 1L)).thenReturn("QUEUED");
 
         // 执行：调用创建预约接口。
         ResponseEntity<ReservationResponseDto> response = reservationController.reserveNearest(currentUser);
@@ -93,33 +93,35 @@ class ReservationControllerTest {
         // 准备：模拟 Redis 中已有处理中状态。
         String requestId = "request-123";
         String status = "PROCESSING";
+        AuthenticatedUser currentUser = new AuthenticatedUser(7L, "test@example.com", UserRole.USER);
 
-        when(reservationQueueService.getRequestStatus(requestId)).thenReturn(status);
+        when(reservationQueueService.getRequestStatus(requestId, 7L)).thenReturn(status);
 
         // 执行：查询指定 requestId。
-        ResponseEntity<ReservationResponseDto> response = reservationController.getReservationStatus(requestId);
+        ResponseEntity<ReservationResponseDto> response = reservationController.getReservationStatus(requestId, currentUser);
 
         // 验证：返回成功状态及对应内容。
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
         assertEquals(requestId, response.getBody().getRequestId());
         assertEquals(status, response.getBody().getStatus());
-        verify(reservationQueueService).getRequestStatus(requestId);
+        verify(reservationQueueService).getRequestStatus(requestId, 7L);
     }
 
     @Test
     void shouldReturnNotFoundWhenStatusIsNull() {
         // 准备：模拟状态键不存在或已过期。
         String requestId = "request-123";
+        AuthenticatedUser currentUser = new AuthenticatedUser(7L, "test@example.com", UserRole.USER);
 
-        when(reservationQueueService.getRequestStatus(requestId)).thenReturn(null);
+        when(reservationQueueService.getRequestStatus(requestId, 7L)).thenReturn(null);
 
         // 执行：查询不存在的 requestId。
-        ResponseEntity<ReservationResponseDto> response = reservationController.getReservationStatus(requestId);
+        ResponseEntity<ReservationResponseDto> response = reservationController.getReservationStatus(requestId, currentUser);
 
         // 验证：控制器返回 404。
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
-        verify(reservationQueueService).getRequestStatus(requestId);
+        verify(reservationQueueService).getRequestStatus(requestId, 7L);
     }
 
     @Test

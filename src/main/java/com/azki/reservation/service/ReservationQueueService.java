@@ -39,9 +39,10 @@ public class ReservationQueueService {
     static final String DLQ_KEY = "reservation:dlq";
     static final String USER_SET_KEY = "reservation:users:queued";
     static final String STATUS_KEY_PREFIX = "reservation:status:";
+    static final String STATUS_OWNER_KEY_PREFIX = "reservation:status-owner:";
     private static final int MAX_ATTEMPTS = 3;
 
-    /** 原子完成邮箱占位、消息入队和初始状态写入。 */
+    /** 原子完成用户占位、消息入队、初始状态和状态所有者写入。 */
     private static final RedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>("""
         if redis.call('SADD', KEYS[2], ARGV[1]) == 0 then
             return 0
@@ -49,6 +50,8 @@ public class ReservationQueueService {
         redis.call('RPUSH', KEYS[1], ARGV[2])
         redis.call('SET', KEYS[3], ARGV[3])
         redis.call('EXPIRE', KEYS[3], ARGV[4])
+        redis.call('SET', KEYS[4], ARGV[1])
+        redis.call('EXPIRE', KEYS[4], ARGV[4])
         return 1
         """, Long.class);
 
@@ -61,12 +64,14 @@ public class ReservationQueueService {
         return item
         """, String.class);
 
-    /** 确认终态，同时清理处理中记录和邮箱占位。 */
+    /** 确认终态，同时清理处理中记录和用户占位。 */
     private static final RedisScript<Long> COMPLETE_SCRIPT = new DefaultRedisScript<>("""
         redis.call('ZREM', KEYS[1], ARGV[1])
         redis.call('SET', KEYS[2], ARGV[2])
         redis.call('EXPIRE', KEYS[2], ARGV[4])
         redis.call('SREM', KEYS[3], ARGV[3])
+        redis.call('SET', KEYS[4], ARGV[3])
+        redis.call('EXPIRE', KEYS[4], ARGV[4])
         return 1
         """, Long.class);
 
@@ -78,6 +83,8 @@ public class ReservationQueueService {
         redis.call('RPUSH', KEYS[2], ARGV[2])
         redis.call('SET', KEYS[3], ARGV[3])
         redis.call('EXPIRE', KEYS[3], ARGV[4])
+        redis.call('SET', KEYS[4], ARGV[5])
+        redis.call('EXPIRE', KEYS[4], ARGV[4])
         return 1
         """, Long.class);
 
@@ -90,6 +97,8 @@ public class ReservationQueueService {
         redis.call('SET', KEYS[3], ARGV[3])
         redis.call('EXPIRE', KEYS[3], ARGV[5])
         redis.call('SREM', KEYS[4], ARGV[4])
+        redis.call('SET', KEYS[5], ARGV[4])
+        redis.call('EXPIRE', KEYS[5], ARGV[5])
         return 1
         """, Long.class);
 
@@ -179,12 +188,13 @@ public class ReservationQueueService {
         }
         String requestId = UUID.randomUUID().toString();
         String statusKey = STATUS_KEY_PREFIX + requestId;
+        String ownerKey = STATUS_OWNER_KEY_PREFIX + requestId;
 
         try {
             String json = objectMapper.writeValueAsString(new QueueItem(request, 0, requestId));
             Long result = redisTemplate.execute(
                 ENQUEUE_SCRIPT,
-                List.of(QUEUE_KEY, USER_SET_KEY, statusKey),
+                List.of(QUEUE_KEY, USER_SET_KEY, statusKey, ownerKey),
                 request.getUserId().toString(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
             );
 
@@ -204,7 +214,16 @@ public class ReservationQueueService {
         return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(USER_SET_KEY, userId.toString()));
     }
 
-    public String getRequestStatus(String requestId) {
+    /** 仅向请求所有者返回队列状态；不匹配时按不存在处理，避免泄露他人请求。 */
+    public String getRequestStatus(String requestId, Long userId) {
+        Object owner = redisTemplate.opsForValue().get(STATUS_OWNER_KEY_PREFIX + requestId);
+        if (owner == null || userId == null || !owner.toString().equals(userId.toString())) {
+            return null;
+        }
+        return getRawRequestStatus(requestId);
+    }
+
+    private String getRawRequestStatus(String requestId) {
         Object status = redisTemplate.opsForValue().get(STATUS_KEY_PREFIX + requestId);
         return status != null ? status.toString() : null;
     }
@@ -248,7 +267,7 @@ public class ReservationQueueService {
     }
 
     private boolean isAlreadyProcessed(String requestId) {
-        return RequestStatus.SUCCESS.name().equals(getRequestStatus(requestId));
+        return RequestStatus.SUCCESS.name().equals(getRawRequestStatus(requestId));
     }
 
     @Scheduled(fixedDelayString = "${reservation.queue.poll-interval-ms:100}")
@@ -317,7 +336,8 @@ public class ReservationQueueService {
         QueueItem item = claimed.item();
         redisTemplate.execute(
             COMPLETE_SCRIPT,
-            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY),
+            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
+                STATUS_OWNER_KEY_PREFIX + item.requestId),
             claimed.rawJson(), status.name(), item.request.getUserId().toString(), statusExpirySeconds()
         );
     }
@@ -338,8 +358,10 @@ public class ReservationQueueService {
             String updatedJson = objectMapper.writeValueAsString(item);
             Long requeued = redisTemplate.execute(
                 REQUEUE_SCRIPT,
-                List.of(PROCESSING_KEY, QUEUE_KEY, STATUS_KEY_PREFIX + item.requestId),
-                claimed.rawJson(), updatedJson, RequestStatus.QUEUED.name(), statusExpirySeconds()
+                List.of(PROCESSING_KEY, QUEUE_KEY, STATUS_KEY_PREFIX + item.requestId,
+                    STATUS_OWNER_KEY_PREFIX + item.requestId),
+                claimed.rawJson(), updatedJson, RequestStatus.QUEUED.name(), statusExpirySeconds(),
+                item.request.getUserId().toString()
             );
             if (!Long.valueOf(1).equals(requeued)) {
                 logger.warn("Retry skipped because processing claim no longer exists: {}", item.requestId);
@@ -361,7 +383,8 @@ public class ReservationQueueService {
 
         Long moved = redisTemplate.execute(
             DLQ_SCRIPT,
-            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY),
+            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
+                STATUS_OWNER_KEY_PREFIX + item.requestId),
             claimed.rawJson(), dlqJson, RequestStatus.FAILED.name(), item.request.getUserId().toString(),
             statusExpirySeconds()
         );

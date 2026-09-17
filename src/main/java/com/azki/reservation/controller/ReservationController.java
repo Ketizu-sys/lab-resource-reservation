@@ -96,7 +96,7 @@ public class ReservationController {
                 // 高负载路径：写入 Redis，HTTP 202 表示“已接收但尚未处理完成”。
                 logger.info("Processing automatic reservation request for user {} through queue", currentUser.id());
                 String requestId = reservationQueueService.enqueueReservationRequest(request);
-                String status = reservationQueueService.getRequestStatus(requestId);
+                String status = reservationQueueService.getRequestStatus(requestId, currentUser.id());
                 return ResponseEntity.accepted().body(new ReservationResponseDto(requestId, status));
             } else {
                 // 正常负载路径：在当前 HTTP 请求中完成选时段和数据库写入。
@@ -113,8 +113,10 @@ public class ReservationController {
 
     @Operation(summary = "根据 requestId 查询排队请求状态")
     @GetMapping("/status/{requestId}")
-    public ResponseEntity<ReservationResponseDto> getReservationStatus(@PathVariable String requestId) {
-        String status = reservationQueueService.getRequestStatus(requestId);
+    public ResponseEntity<ReservationResponseDto> getReservationStatus(
+            @PathVariable String requestId,
+            @AuthenticationPrincipal AuthenticatedUser currentUser) {
+        String status = reservationQueueService.getRequestStatus(requestId, currentUser.id());
         if (status == null) {
             return ResponseEntity.notFound().build();
         }

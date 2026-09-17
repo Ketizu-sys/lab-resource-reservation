@@ -7,6 +7,7 @@ import com.azki.reservation.repository.UserRepository;
 import com.azki.reservation.security.util.JwtUtil;
 import com.azki.reservation.service.LoadMonitoringService;
 import com.azki.reservation.service.ReservationService;
+import com.azki.reservation.service.ReservationQueueService;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
 
     @MockitoBean
     private LoadMonitoringService loadMonitoringService;
+
+    @MockitoBean
+    private ReservationQueueService reservationQueueService;
 
     private User user;
 
@@ -116,6 +120,28 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
     void healthEndpointShouldRemainPublicForContainerProbe() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void queuedRequestStatusShouldUseAuthenticatedUserId() throws Exception {
+        when(reservationQueueService.getRequestStatus("owned-request", user.getId()))
+                .thenReturn("PROCESSING");
+
+        mockMvc.perform(get("/api/v1/reservations/status/owned-request")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isOk());
+
+        verify(reservationQueueService).getRequestStatus("owned-request", user.getId());
+    }
+
+    @Test
+    void queuedRequestStatusShouldBeHiddenWhenItIsNotOwned() throws Exception {
+        when(reservationQueueService.getRequestStatus("foreign-request", user.getId()))
+                .thenReturn(null);
+
+        mockMvc.perform(get("/api/v1/reservations/status/foreign-request")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isNotFound());
     }
 
     private String bearer(User target) {

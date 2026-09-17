@@ -73,8 +73,8 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         queueService.processReservationQueue();
         queueService.processReservationQueue();
 
-        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(firstId));
-        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(secondId));
+        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(firstId, 1L));
+        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(secondId, 2L));
         assertEquals(0, queueService.getQueueLength());
         assertEquals(0, queueService.getProcessingLength());
     }
@@ -91,8 +91,8 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         queueService.processReservationQueue();
         queueService.processReservationQueue();
 
-        assertEquals(ReservationQueueService.RequestStatus.FAILED.name(), queueService.getRequestStatus(failingId));
-        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(healthyId));
+        assertEquals(ReservationQueueService.RequestStatus.FAILED.name(), queueService.getRequestStatus(failingId, 3L));
+        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(healthyId, 4L));
         assertEquals(1, queueService.getDLQLength());
         assertEquals(0, queueService.getQueueLength());
         assertEquals(0, queueService.getProcessingLength());
@@ -137,7 +137,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         queueService.processReservationQueue();
 
         verify(reservationService).reserveSlot(9L, 42L);
-        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(requestId));
+        assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(requestId, 9L));
         assertEquals(0, queueService.getProcessingLength());
     }
 }

@@ -76,14 +76,16 @@ class ReservationQueueServiceTest {
         String requestId = "test-request-id";
         String status = ReservationQueueService.RequestStatus.PROCESSING.name();
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(anyString())).thenReturn(status);
+        when(valueOperations.get("reservation:status-owner:" + requestId)).thenReturn("1");
+        when(valueOperations.get("reservation:status:" + requestId)).thenReturn(status);
 
         // 执行：读取请求状态。
-        String result = queueService.getRequestStatus(requestId);
+        String result = queueService.getRequestStatus(requestId, 1L);
 
         // 验证：返回 Redis 中保存的状态。
         assertEquals(status, result);
         verify(valueOperations).get("reservation:status:" + requestId);
+        verify(valueOperations).get("reservation:status-owner:" + requestId);
     }
 
     @Test
@@ -91,14 +93,25 @@ class ReservationQueueServiceTest {
         // 准备：模拟 Redis 中不存在状态键。
         String requestId = "test-request-id";
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(anyString())).thenReturn(null);
+        when(valueOperations.get("reservation:status-owner:" + requestId)).thenReturn(null);
 
         // 执行：读取请求状态。
-        String result = queueService.getRequestStatus(requestId);
+        String result = queueService.getRequestStatus(requestId, 1L);
 
         // 验证：服务返回 null。
         assertNull(result);
-        verify(valueOperations).get("reservation:status:" + requestId);
+        verify(valueOperations, never()).get("reservation:status:" + requestId);
+    }
+
+    @Test
+    void shouldHideRequestStatusFromDifferentUser() {
+        String requestId = "test-request-id";
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("reservation:status-owner:" + requestId)).thenReturn("2");
+
+        assertNull(queueService.getRequestStatus(requestId, 1L));
+
+        verify(valueOperations, never()).get("reservation:status:" + requestId);
     }
 
     @Test
