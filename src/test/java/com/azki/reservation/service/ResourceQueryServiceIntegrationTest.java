@@ -68,6 +68,39 @@ class ResourceQueryServiceIntegrationTest extends ContainerIntegrationTestSuppor
     }
 
     @Test
+    void optionalFiltersShouldWorkForEveryNullAndBlankCombinationOnPostgres() {
+        Resource gpu = save("filter-gpu", ResourceType.GPU, ResourceStatus.ACTIVE);
+        Resource lab = save("filter-lab", ResourceType.LAB, ResourceStatus.ACTIVE);
+        String locationFragment = marker.toUpperCase();
+
+        Page<ResourceResponseDto> withoutFilters = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(null, null, null, PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> typeOnly = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(ResourceType.GPU, null, null, PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> locationOnly = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(null, null, locationFragment, PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> typeAndLocation = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(ResourceType.LAB, null, locationFragment, PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> emptyLocation = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(null, null, "", PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> blankLocation = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(null, null, "   ", PageRequest.of(0, 100)));
+        Page<ResourceResponseDto> missingLocation = assertDoesNotThrow(() ->
+                resourceQueryService.findResources(null, null, "missing-" + UUID.randomUUID(), PageRequest.of(0, 100)));
+
+        assertTrue(withoutFilters.stream().anyMatch(dto -> dto.id().equals(gpu.getId())));
+        assertTrue(withoutFilters.stream().anyMatch(dto -> dto.id().equals(lab.getId())));
+        assertTrue(typeOnly.stream().anyMatch(dto -> dto.id().equals(gpu.getId())));
+        assertTrue(typeOnly.stream().allMatch(dto -> dto.type() == ResourceType.GPU));
+        assertEquals(2, locationOnly.getTotalElements());
+        assertEquals(1, typeAndLocation.getTotalElements());
+        assertEquals(lab.getId(), typeAndLocation.getContent().getFirst().id());
+        assertTrue(emptyLocation.stream().anyMatch(dto -> dto.id().equals(gpu.getId())));
+        assertTrue(blankLocation.stream().anyMatch(dto -> dto.id().equals(lab.getId())));
+        assertTrue(missingLocation.isEmpty());
+    }
+
+    @Test
     void disabledOrMissingResourceShouldReturnNotFound() {
         Resource disabled = save("hidden", ResourceType.EQUIPMENT, ResourceStatus.MAINTENANCE);
 

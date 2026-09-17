@@ -31,9 +31,19 @@ public class ResourceQueryService {
         }
         String normalizedLocation =
                 location == null || location.isBlank() ? null : location.trim();
-        return resourceRepository
-                .findVisibleResources(ResourceStatus.ACTIVE, type, normalizedLocation, pageable)
-                .map(this::toDto);
+        Page<Resource> resources;
+        if (type == null && normalizedLocation == null) {
+            resources = resourceRepository.findByStatus(ResourceStatus.ACTIVE, pageable);
+        } else if (type != null && normalizedLocation == null) {
+            resources = resourceRepository.findByStatusAndType(ResourceStatus.ACTIVE, type, pageable);
+        } else if (type == null) {
+            resources = resourceRepository.findByStatusAndLocationContainingIgnoreCase(
+                    ResourceStatus.ACTIVE, normalizedLocation, pageable);
+        } else {
+            resources = resourceRepository.findByStatusAndTypeAndLocationContainingIgnoreCase(
+                    ResourceStatus.ACTIVE, type, normalizedLocation, pageable);
+        }
+        return resources.map(this::toDto);
     }
 
     public ResourceResponseDto findResource(Long id) {
