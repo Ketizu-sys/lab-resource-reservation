@@ -28,7 +28,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 验证 JWT 身份、角色和预约接口不再信任客户端邮箱。 */
-@SpringBootTest
+@SpringBootTest(properties = "management.server.port=8080")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
@@ -109,6 +109,12 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
                         .content("""
                                 {"email":"security-user@example.com","password":"password"}
                                 """))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void healthEndpointShouldRemainPublicForContainerProbe() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
     }
 
