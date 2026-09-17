@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 精确复现 main/V1 在 V2 迁移前已经执行的变更集。 -->
+    <include file="/db/changelog/changeset-001.xml"/>
+    <include file="/db/changelog/changeset-002-dev-data.xml"/>
+    <include file="/db/changelog/changeset-003-concurrency-constraints.xml"/>
+</databaseChangeLog>
