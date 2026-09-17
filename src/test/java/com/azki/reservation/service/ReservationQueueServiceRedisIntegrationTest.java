@@ -18,7 +18,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -77,6 +80,8 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(secondId, 2L));
         assertEquals(0, queueService.getQueueLength());
         assertEquals(0, queueService.getProcessingLength());
+        assertFalse(queueService.isUserAlreadyInQueue(1L));
+        assertFalse(queueService.isUserAlreadyInQueue(2L));
     }
 
     @Test
@@ -96,6 +101,39 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         assertEquals(1, queueService.getDLQLength());
         assertEquals(0, queueService.getQueueLength());
         assertEquals(0, queueService.getProcessingLength());
+        assertFalse(queueService.isUserAlreadyInQueue(3L));
+        assertFalse(queueService.isUserAlreadyInQueue(4L));
+    }
+
+    @Test
+    void retryShouldKeepDedupAndReturnStatusToQueued() {
+        String requestId = queueService.enqueueReservationRequest(request(5L));
+        when(reservationService.reserveNearestSlot(5L))
+                .thenThrow(new BusinessException("temporary failure"));
+
+        queueService.processReservationQueue();
+
+        assertEquals(ReservationQueueService.RequestStatus.QUEUED.name(),
+                queueService.getRequestStatus(requestId, 5L));
+        assertTrue(queueService.isUserAlreadyInQueue(5L));
+        assertEquals(1, queueService.getQueueLength());
+        assertEquals(0, queueService.getProcessingLength());
+        assertEquals(0, queueService.getDLQLength());
+    }
+
+    @Test
+    void permanentFailureShouldClearDedupAndKeepFailedStatus() {
+        String requestId = queueService.enqueueReservationRequest(request(6L));
+        when(reservationService.reserveNearestSlot(6L))
+                .thenThrow(new DuplicateReservationException("already reserved"));
+
+        queueService.processReservationQueue();
+
+        assertEquals(ReservationQueueService.RequestStatus.FAILED.name(),
+                queueService.getRequestStatus(requestId, 6L));
+        assertFalse(queueService.isUserAlreadyInQueue(6L));
+        assertEquals(0, queueService.getQueueLength());
+        assertEquals(0, queueService.getProcessingLength());
     }
 
     @Test
@@ -110,14 +148,38 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     }
 
     @Test
+    void malformedJsonWithReadableMetadataShouldClearDedupAndPublishFailedStatus() {
+        String raw = """
+                {"request":{"userId":8,"mode":"UNKNOWN"},"attempts":0,"requestId":"malformed-8"}
+                """;
+        redisTemplate.opsForSet().add(ReservationQueueService.USER_SET_KEY, "8");
+        redisTemplate.opsForList().rightPush(ReservationQueueService.QUEUE_KEY, raw);
+
+        queueService.processReservationQueue();
+
+        assertEquals(ReservationQueueService.RequestStatus.FAILED.name(),
+                queueService.getRequestStatus("malformed-8", 8L));
+        assertFalse(queueService.isUserAlreadyInQueue(8L));
+        assertEquals(1, queueService.getDLQLength());
+        assertEquals(0, queueService.getProcessingLength());
+    }
+
+    @Test
     void shouldRecoverExpiredProcessingClaim() {
-        redisTemplate.opsForZSet().add(ReservationQueueService.PROCESSING_KEY, "orphaned-message", 0);
+        String requestId = queueService.enqueueReservationRequest(request(7L));
+        Object raw = redisTemplate.opsForList().leftPop(ReservationQueueService.QUEUE_KEY);
+        redisTemplate.opsForZSet().add(ReservationQueueService.PROCESSING_KEY, raw, 0);
+        redisTemplate.opsForSet().remove(ReservationQueueService.USER_SET_KEY, "7");
 
         long recovered = queueService.recoverStaleClaims();
 
         assertEquals(1, recovered);
         assertEquals(1, queueService.getQueueLength());
         assertEquals(0, queueService.getProcessingLength());
+        assertTrue(queueService.isUserAlreadyInQueue(7L));
+        assertEquals(ReservationQueueService.RequestStatus.QUEUED.name(),
+                queueService.getRequestStatus(requestId, 7L));
+        assertNull(queueService.getRequestStatus(requestId, 999L));
     }
 
     private ReservationRequestDto request(Long userId) {
@@ -139,5 +201,6 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         verify(reservationService).reserveSlot(9L, 42L);
         assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(requestId, 9L));
         assertEquals(0, queueService.getProcessingLength());
+        assertFalse(queueService.isUserAlreadyInQueue(9L));
     }
 }

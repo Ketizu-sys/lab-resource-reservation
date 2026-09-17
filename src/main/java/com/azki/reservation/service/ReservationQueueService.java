@@ -66,7 +66,9 @@ public class ReservationQueueService {
 
     /** 确认终态，同时清理处理中记录和用户占位。 */
     private static final RedisScript<Long> COMPLETE_SCRIPT = new DefaultRedisScript<>("""
-        redis.call('ZREM', KEYS[1], ARGV[1])
+        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
         redis.call('SET', KEYS[2], ARGV[2])
         redis.call('EXPIRE', KEYS[2], ARGV[4])
         redis.call('SREM', KEYS[3], ARGV[3])
@@ -102,22 +104,64 @@ public class ReservationQueueService {
         return 1
         """, Long.class);
 
-    /** 无法解析的原始消息仍要保留在 DLQ 中，不能静默丢弃。 */
+    /** 无法被 Java 解析的消息仍要进入 DLQ；若 JSON 元数据可读，则同步清理占位与状态。 */
     private static final RedisScript<Long> MALFORMED_TO_DLQ_SCRIPT = new DefaultRedisScript<>("""
+        local function decodeItem(raw)
+            local ok, value = pcall(cjson.decode, raw)
+            if not ok then return nil end
+            if type(value) == 'string' then
+                ok, value = pcall(cjson.decode, value)
+                if not ok then return nil end
+            end
+            if type(value) ~= 'table' then return nil end
+            return value
+        end
         if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
             return 0
         end
         redis.call('RPUSH', KEYS[2], ARGV[1])
+        local item = decodeItem(ARGV[1])
+        if item and item.requestId and item.request and item.request.userId then
+            local userId = cjson.encode(tostring(item.request.userId))
+            local statusKey = cjson.decode(ARGV[2]) .. item.requestId
+            local ownerKey = cjson.decode(ARGV[3]) .. item.requestId
+            redis.call('SET', statusKey, ARGV[4])
+            redis.call('EXPIRE', statusKey, ARGV[5])
+            redis.call('SET', ownerKey, userId)
+            redis.call('EXPIRE', ownerKey, ARGV[5])
+            redis.call('SREM', KEYS[3], userId)
+        end
         return 1
         """, Long.class);
 
-    /** 回收领取时间早于截止值的消息，供其他轮次重新处理。 */
+    /** 回收超时消息时原子恢复等待状态、所有者和用户去重占位。 */
     private static final RedisScript<Long> RECOVER_STALE_SCRIPT = new DefaultRedisScript<>("""
+        local function decodeItem(raw)
+            local ok, value = pcall(cjson.decode, raw)
+            if not ok then return nil end
+            if type(value) == 'string' then
+                ok, value = pcall(cjson.decode, value)
+                if not ok then return nil end
+            end
+            if type(value) ~= 'table' then return nil end
+            return value
+        end
         local items = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
         local recovered = 0
         for _, item in ipairs(items) do
             if redis.call('ZREM', KEYS[1], item) == 1 then
                 redis.call('RPUSH', KEYS[2], item)
+                local decoded = decodeItem(item)
+                if decoded and decoded.requestId and decoded.request and decoded.request.userId then
+                    local userId = cjson.encode(tostring(decoded.request.userId))
+                    local statusKey = cjson.decode(ARGV[2]) .. decoded.requestId
+                    local ownerKey = cjson.decode(ARGV[3]) .. decoded.requestId
+                    redis.call('SET', statusKey, ARGV[4])
+                    redis.call('EXPIRE', statusKey, ARGV[5])
+                    redis.call('SET', ownerKey, userId)
+                    redis.call('EXPIRE', ownerKey, ARGV[5])
+                    redis.call('SADD', KEYS[3], userId)
+                end
                 recovered = recovered + 1
             end
         end
@@ -334,12 +378,15 @@ public class ReservationQueueService {
 
     private void complete(ClaimedQueueItem claimed, RequestStatus status) {
         QueueItem item = claimed.item();
-        redisTemplate.execute(
+        Long completed = redisTemplate.execute(
             COMPLETE_SCRIPT,
             List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
                 STATUS_OWNER_KEY_PREFIX + item.requestId),
             claimed.rawJson(), status.name(), item.request.getUserId().toString(), statusExpirySeconds()
         );
+        if (!Long.valueOf(1).equals(completed)) {
+            logger.warn("Completion skipped because processing claim no longer exists: {}", item.requestId);
+        }
     }
 
     private void handleRetryableError(ClaimedQueueItem claimed, Exception error, String errorType) {
@@ -396,7 +443,9 @@ public class ReservationQueueService {
 
     private void moveMalformedClaimToDLQ(String rawJson) {
         Long moved = redisTemplate.execute(
-            MALFORMED_TO_DLQ_SCRIPT, List.of(PROCESSING_KEY, DLQ_KEY), rawJson
+            MALFORMED_TO_DLQ_SCRIPT, List.of(PROCESSING_KEY, DLQ_KEY, USER_SET_KEY),
+            rawJson, STATUS_KEY_PREFIX, STATUS_OWNER_KEY_PREFIX, RequestStatus.FAILED.name(),
+            statusExpirySeconds()
         );
         if (Long.valueOf(1).equals(moved)) {
             meterRegistry.counter("reservation.dlq.malformed").increment();
@@ -406,7 +455,9 @@ public class ReservationQueueService {
     long recoverStaleClaims() {
         long cutoff = System.currentTimeMillis() - claimTimeoutMs;
         Long recovered = redisTemplate.execute(
-            RECOVER_STALE_SCRIPT, List.of(PROCESSING_KEY, QUEUE_KEY), cutoff
+            RECOVER_STALE_SCRIPT, List.of(PROCESSING_KEY, QUEUE_KEY, USER_SET_KEY),
+            cutoff, STATUS_KEY_PREFIX, STATUS_OWNER_KEY_PREFIX, RequestStatus.QUEUED.name(),
+            statusExpirySeconds()
         );
         long count = recovered != null ? recovered : 0;
         if (count > 0) {
