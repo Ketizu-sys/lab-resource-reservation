@@ -7,6 +7,7 @@ import com.azki.reservation.service.AdminResourceService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.*;
@@ -22,7 +23,7 @@ public class AdminResourceController {
     @PostMapping public ResponseEntity<ResourceResponseDto> create(@Valid @RequestBody AdminResourceRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
     }
-    @GetMapping public Page<ResourceResponseDto> findAll(Pageable pageable) { return service.findAll(pageable); }
+    @GetMapping public Page<ResourceResponseDto> findAll(@ParameterObject Pageable pageable) { return service.findAll(pageable); }
     @PutMapping("/{id}") public ResourceResponseDto update(@PathVariable Long id, @Valid @RequestBody AdminResourceRequest request) {
         return service.update(id, request);
     }

@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -124,6 +125,15 @@ public class GlobalExceptionHandler {
             request.getRequestURI());
 
         return new ResponseEntity<>(apiError, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(PropertyReferenceException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ResponseEntity<ApiError> handleInvalidSortProperty(
+            PropertyReferenceException ex, HttpServletRequest request) {
+        logger.warn("Invalid sort property: {}", ex.getPropertyName());
+        return buildErrorResponse(ex, "Invalid sort property: " + ex.getPropertyName(),
+                HttpStatus.BAD_REQUEST, request.getRequestURI());
     }
 
     @ExceptionHandler(Exception.class)

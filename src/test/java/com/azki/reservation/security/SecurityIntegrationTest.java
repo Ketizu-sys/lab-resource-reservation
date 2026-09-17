@@ -27,6 +27,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 /** 验证 JWT 身份、角色和预约接口不再信任客户端邮箱。 */
 @SpringBootTest(properties = "management.server.port=8080")
@@ -142,6 +143,40 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
         mockMvc.perform(get("/api/v1/reservations/status/foreign-request")
                         .header("Authorization", bearer(user)))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pageableEndpointsShouldAcceptValidParametersAndRejectInvalidSorts() throws Exception {
+        String authorization = bearer(user);
+
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("page", "0").param("size", "20"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("page", "1").param("size", "20"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("sort", "id,asc"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("sort", "name,asc"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("sort", "notExist,asc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.path").value("/api/v1/resources"));
+        mockMvc.perform(get("/api/v1/resources")
+                        .header("Authorization", authorization)
+                        .param("sort", "[\"string\"]"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
     }
 
     private String bearer(User target) {

@@ -6,6 +6,7 @@ import com.azki.reservation.service.AdminSlotService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.*;
@@ -26,7 +27,7 @@ public class AdminSlotController {
     @PostMapping("/batch") public ResponseEntity<List<AdminSlotResponse>> batch(@Valid @RequestBody BatchSlotRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createBatch(request));
     }
-    @GetMapping public Page<AdminSlotResponse> findAll(Pageable pageable) { return service.findAll(pageable); }
+    @GetMapping public Page<AdminSlotResponse> findAll(@ParameterObject Pageable pageable) { return service.findAll(pageable); }
     @PutMapping("/{id}") public AdminSlotResponse update(@PathVariable Long id, @Valid @RequestBody AdminSlotRequest request) {
         return service.update(id, request);
     }

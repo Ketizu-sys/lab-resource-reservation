@@ -6,6 +6,7 @@ import com.azki.reservation.entity.ReservationStatus;
 import com.azki.reservation.service.AdminReservationService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.*;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -26,7 +27,7 @@ public class AdminReservationController {
             @RequestParam(required = false) ReservationStatus status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime start,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime end,
-            Pageable pageable) {
+            @ParameterObject Pageable pageable) {
         return service.findAll(userId, resourceId, status, start, end, pageable);
     }
 

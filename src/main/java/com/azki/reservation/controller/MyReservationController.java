@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,7 +30,7 @@ public class MyReservationController {
     @GetMapping
     public Page<ReservationDetailsDto> findMine(
             @RequestParam(required = false) ReservationStatus status,
-            Pageable pageable,
+            @ParameterObject Pageable pageable,
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
         return service.findMine(currentUser.id(), status, pageable);
     }

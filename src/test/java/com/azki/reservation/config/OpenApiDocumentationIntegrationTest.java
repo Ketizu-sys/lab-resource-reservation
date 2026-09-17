@@ -34,6 +34,12 @@ class OpenApiDocumentationIntegrationTest extends ContainerIntegrationTestSuppor
                 .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.bearerFormat").value("JWT"))
                 .andExpect(jsonPath("$.paths['/api/auth/login'].post.security").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/v1/reservations'].post.security[0].bearerAuth").isArray())
-                .andExpect(jsonPath("$.paths['/api/v1/admin/resources'].get.security[0].bearerAuth").isArray());
+                .andExpect(jsonPath("$.paths['/api/v1/admin/resources'].get.security[0].bearerAuth").isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/resources'].get.parameters[?(@.name == 'page')].in").value("query"))
+                .andExpect(jsonPath("$.paths['/api/v1/resources'].get.parameters[?(@.name == 'page')].description")
+                        .value(org.hamcrest.Matchers.hasItem(org.hamcrest.Matchers.containsString("page=0"))))
+                .andExpect(jsonPath("$.paths['/api/v1/resources'].get.parameters[?(@.name == 'sort')].in").value("query"))
+                .andExpect(jsonPath("$.paths['/api/v1/resources'].get.parameters[?(@.name == 'sort')].example[0]")
+                        .value("id,asc"));
     }
 }
