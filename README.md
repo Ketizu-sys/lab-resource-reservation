@@ -6,7 +6,8 @@ A production-oriented appointment reservation backend built with **Java 21** and
 
 - JWT-based authentication and Spring Security
 - Queue-based reservation processing for high-concurrency workloads
-- Automatic selection of the nearest available time slot
+- Resource catalog, available-slot search, manual booking, and automatic booking
+- User-owned reservation history plus administrator resource/slot/reservation APIs
 - Reservation lifecycle tracking and cancellation
 - Redis-backed request queue, status tracking, and caching
 - Optimistic locking for concurrent reservation updates
@@ -69,7 +70,7 @@ Reservation request
   -> publish reservation status
 ```
 
-Concurrency-sensitive updates use optimistic locking so conflicting writes can be detected instead of silently overwriting one another.
+Concurrency-sensitive updates combine transactions, pessimistic row locks, `SKIP LOCKED`, optimistic versions, and database constraints so conflicting writes cannot silently overwrite one another.
 
 ## Reliability & Concurrency
 
@@ -207,12 +208,14 @@ Run the test suite with:
 
 A Postman collection is included for exercising authentication, reservation creation, status tracking, and cancellation flows.
 
+The complete V2 domain model, API list, verification flow, concurrency design, and local administrator setup are documented in [V2_PROJECT_GUIDE_CN.md](V2_PROJECT_GUIDE_CN.md).
+
 ## Project Structure
 
 ```text
 config/       Application configuration
 controller/   REST endpoints
- dto/          API request and response models
+dto/          API request and response models
 entity/       JPA entities
 exception/    Application exceptions
 filter/       Web filters, including rate limiting

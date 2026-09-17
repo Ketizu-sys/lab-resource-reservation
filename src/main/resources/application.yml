@@ -7,7 +7,7 @@ spring:
     url: jdbc:postgresql://localhost:5432/reservationdb
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD}
-  # Redis 同时承载缓存、请求队列、请求状态和邮箱去重集合。
+  # Redis 同时承载缓存、请求队列、请求状态和用户排队去重集合。
   data:
     redis:
       host: localhost
