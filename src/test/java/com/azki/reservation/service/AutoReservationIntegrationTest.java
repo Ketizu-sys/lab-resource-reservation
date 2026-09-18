@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-class AutoReservationV2IntegrationTest extends ContainerIntegrationTestSupport {
+class AutoReservationIntegrationTest extends ContainerIntegrationTestSupport {
     @Autowired ReservationService service;
     @Autowired UserRepository users;
     @Autowired ResourceRepository resources;
