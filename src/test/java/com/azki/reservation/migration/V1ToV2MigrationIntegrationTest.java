@@ -35,11 +35,11 @@ class V1ToV2MigrationIntegrationTest {
 
         migrate(dataSource, "classpath:db/changelog/db.changelog-master.xml");
 
-        assertEquals(5, jdbc.queryForObject(
+        assertEquals(6, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM z_liq_changelog WHERE id IN " +
                         "('4-introduce-resource-domain', '5-reservation-lifecycle', " +
                         "'6-add-user-role', '7-unify-time-semantics', " +
-                        "'8-add-demo-resources-and-slots')",
+                        "'8-add-demo-resources-and-slots', '8-remove-resource-version-labels')",
                 Integer.class));
         assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "reserved_at"));
         assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "created_date"));

@@ -94,4 +94,29 @@
             );
         ]]></sql>
     </changeSet>
+
+    <!--
+      清理由早期人工验收数据遗留在资源文本中的版本标签。
+      仅移除独立的 V1/V2 标记并保留其余内容，避免演示环境向用户展示内部版本信息。
+    -->
+    <changeSet id="8-remove-resource-version-labels" author="Hu" context="dev">
+        <sql><![CDATA[
+            UPDATE resource
+            SET name = btrim(regexp_replace(name, '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi')),
+                description = CASE
+                    WHEN description IS NULL THEN NULL
+                    ELSE btrim(regexp_replace(description,
+                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi'))
+                END,
+                location = CASE
+                    WHEN location IS NULL THEN NULL
+                    ELSE btrim(regexp_replace(location,
+                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi'))
+                END,
+                last_modified_by = 'system',
+                last_modified_date = CURRENT_TIMESTAMP
+            WHERE lower(concat_ws(' ', name, description, location))
+                      ~ '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)';
+        ]]></sql>
+    </changeSet>
 </databaseChangeLog>
