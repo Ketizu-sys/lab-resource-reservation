@@ -25,7 +25,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
@@ -121,6 +123,27 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
     void healthEndpointShouldRemainPublicForContainerProbe() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void configuredFrontendOriginShouldPassCorsPreflightWithoutAuthentication() throws Exception {
+        mockMvc.perform(options("/api/v1/resources")
+                        .header("Origin", "http://localhost:5173")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"))
+                .andExpect(header().string("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS"))
+                .andExpect(header().string("Access-Control-Allow-Headers", "Authorization"));
+    }
+
+    @Test
+    void unknownFrontendOriginShouldBeRejectedByCors() throws Exception {
+        mockMvc.perform(options("/api/v1/resources")
+                        .header("Origin", "https://untrusted.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
     @Test
