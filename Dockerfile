@@ -8,7 +8,10 @@ COPY .mvn .mvn
 COPY pom.xml .
 COPY src src
 
-RUN ./mvnw clean install -DskipTests
+# 测试已在镜像构建前由 Maven 全量执行；镜像阶段不解析或编译测试依赖。
+# BuildKit 缓存 Maven 仓库，网络短暂中断后重试时无需重新下载全部依赖。
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw clean package -Dmaven.test.skip=true
 # 解开 Spring Boot Fat Jar，便于下一阶段按依赖层复制并启动。
 RUN mkdir -p target/dependency && (cd target/dependency; jar -xf ../*.jar)
 
