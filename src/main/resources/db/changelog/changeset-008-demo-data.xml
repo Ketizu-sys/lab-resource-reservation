@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+      补充用于本地演示和接口联调的实验室资源。
+      插入语句按唯一资源名和时段自然键判重，因此既支持全新数据库，也支持已有数据升级。
+    -->
+    <changeSet id="8-add-demo-resources-and-slots" author="Hu" context="dev">
+        <sql><![CDATA[
+            UPDATE resource
+            SET description = '为历史时段保留的默认实验室资源',
+                last_modified_by = 'system',
+                last_modified_date = CURRENT_TIMESTAMP
+            WHERE name = '默认实验室资源'
+              AND description = 'V2 迁移为已有时段创建的默认资源';
+
+            INSERT INTO resource
+                (name, type, location, status, capacity, description,
+                 created_by, created_date, version)
+            VALUES
+                ('化学分析实验室', 'LAB', '科研楼 A101', 'ACTIVE', 24,
+                 '配备通风橱、分析天平和常规化学分析设施，适合基础样品检测。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('分子生物学实验室', 'LAB', '生命科学楼 B205', 'ACTIVE', 18,
+                 '提供无菌操作台、离心机和 PCR 实验区域，适合分子生物学实验。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('材料制备实验室', 'LAB', '工程训练中心 C310', 'MAINTENANCE', 12,
+                 '用于材料切割、研磨与热处理，目前处于设备维护阶段。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('人工智能研讨室', 'MEETING_ROOM', '信息楼 D201', 'ACTIVE', 10,
+                 '配备交互式显示屏和视频会议系统，适合课题组讨论与代码评审。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('学术报告会议室', 'MEETING_ROOM', '信息楼 D305', 'ACTIVE', 40,
+                 '配备投影、扩声和录播设备，适合学术报告与中型研讨活动。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('深度学习计算节点', 'GPU', '数据中心 A 区 3 号机柜', 'ACTIVE', 4,
+                 '提供多卡 GPU 计算环境，适合模型训练和并行计算任务。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('高性能计算节点', 'GPU', '数据中心 B 区 1 号机柜', 'MAINTENANCE', 8,
+                 '面向大规模科学计算任务，目前正在进行网络与存储维护。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('激光共聚焦显微镜', 'EQUIPMENT', '仪器中心 E102', 'ACTIVE', 1,
+                 '用于高分辨率荧光成像，预约前需完成仪器操作培训。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('三维打印设备', 'EQUIPMENT', '创新工坊 F110', 'DISABLED', 2,
+                 '用于树脂与工程塑料原型制作，当前暂停开放预约。',
+                 'system', CURRENT_TIMESTAMP, 0),
+                ('数据分析工作站', 'WORKSTATION', '公共计算室 G204', 'ACTIVE', 6,
+                 '安装统计分析、科学绘图和数据处理软件，适合科研数据分析。',
+                 'system', CURRENT_TIMESTAMP, 0)
+            ON CONFLICT (name) DO NOTHING;
+
+            WITH slot_templates(resource_name, day_offset, start_hour, end_hour) AS (
+                VALUES
+                    ('化学分析实验室', 1, 9, 11),
+                    ('化学分析实验室', 2, 14, 16),
+                    ('分子生物学实验室', 1, 14, 16),
+                    ('分子生物学实验室', 3, 9, 11),
+                    ('人工智能研讨室', 1, 10, 12),
+                    ('人工智能研讨室', 2, 15, 17),
+                    ('学术报告会议室', 2, 9, 12),
+                    ('深度学习计算节点', 1, 8, 12),
+                    ('深度学习计算节点', 2, 13, 17),
+                    ('激光共聚焦显微镜', 3, 9, 11),
+                    ('数据分析工作站', 1, 9, 12),
+                    ('数据分析工作站', 2, 14, 17)
+            ),
+            candidate_slots AS (
+                SELECT r.id AS resource_id,
+                       date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                           + make_interval(days => t.day_offset, hours => t.start_hour) AS start_time,
+                       date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                           + make_interval(days => t.day_offset, hours => t.end_hour) AS end_time
+                FROM slot_templates t
+                JOIN resource r ON r.name = t.resource_name
+                WHERE r.status = 'ACTIVE'
+            )
+            INSERT INTO available_slot
+                (start_time, end_time, resource_id, is_reserved,
+                 created_by, created_date, version)
+            SELECT c.start_time, c.end_time, c.resource_id, false,
+                   'system', CURRENT_TIMESTAMP, 0
+            FROM candidate_slots c
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM available_slot s
+                WHERE s.resource_id = c.resource_id
+                  AND s.start_time = c.start_time
+                  AND s.end_time = c.end_time
+            );
+        ]]></sql>
+    </changeSet>
+</databaseChangeLog>

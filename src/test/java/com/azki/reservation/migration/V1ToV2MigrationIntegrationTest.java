@@ -35,10 +35,11 @@ class V1ToV2MigrationIntegrationTest {
 
         migrate(dataSource, "classpath:db/changelog/db.changelog-master.xml");
 
-        assertEquals(4, jdbc.queryForObject(
+        assertEquals(5, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM z_liq_changelog WHERE id IN " +
                         "('4-introduce-resource-domain', '5-reservation-lifecycle', " +
-                        "'6-add-user-role', '7-unify-time-semantics')",
+                        "'6-add-user-role', '7-unify-time-semantics', " +
+                        "'8-add-demo-resources-and-slots')",
                 Integer.class));
         assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "reserved_at"));
         assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "created_date"));
@@ -48,6 +49,20 @@ class V1ToV2MigrationIntegrationTest {
         assertEquals("Asia/Shanghai", jdbc.queryForObject("SHOW TimeZone", String.class));
         assertEquals(1, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM resource WHERE name = '默认实验室资源'", Integer.class));
+        assertEquals(11, jdbc.queryForObject("SELECT COUNT(*) FROM resource", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM resource WHERE " +
+                        "LOWER(CONCAT_WS(' ', name, type, location, status, description)) " +
+                        "LIKE '%v1%' OR LOWER(CONCAT_WS(' ', name, type, location, status, description)) LIKE '%v2%'",
+                Integer.class));
+        assertEquals(12, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM available_slot s JOIN resource r ON r.id = s.resource_id " +
+                        "WHERE r.name <> '默认实验室资源' AND s.start_time > CURRENT_TIMESTAMP",
+                Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM available_slot s JOIN resource r ON r.id = s.resource_id " +
+                        "WHERE r.status <> 'ACTIVE' AND r.name <> '默认实验室资源'",
+                Integer.class));
         assertEquals(0, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM available_slot WHERE resource_id IS NULL", Integer.class));
         assertEquals(0, jdbc.queryForObject(
