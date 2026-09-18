@@ -158,7 +158,28 @@ class AuthRegistrationIntegrationTest extends ContainerIntegrationTestSupport {
                                 """.formatted(email, password)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
-                .andExpect(jsonPath("$.tokenType").value("Bearer"));
+                .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.role").value("USER"));
+    }
+
+    @Test
+    void loginShouldReturnCurrentAdministratorRole() throws Exception {
+        String suffix = suffix();
+        String email = "admin-login-" + suffix + "@example.com";
+        String password = "Test123456!";
+        jdbcTemplate.update("""
+                INSERT INTO users
+                    (email, user_name, password, role, created_by, created_date, version)
+                VALUES (?, ?, ?, 'ADMIN', 'test', CURRENT_TIMESTAMP, 0)
+                """, email, "admin_" + suffix, passwordEncoder.encode(password));
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"%s","password":"%s"}
+                                """.formatted(email, password)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("ADMIN"));
     }
 
     @Test

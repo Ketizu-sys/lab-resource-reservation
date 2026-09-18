@@ -92,6 +92,7 @@ public class AuthController {
                             .tokenType("Bearer")
                             .email(user.getEmail())
                             .userName(user.getUserName())
+                            .role(user.getRole())
                             .expiresAt(jwtUtil.getExpirationDate(token))
                             .build();
 
