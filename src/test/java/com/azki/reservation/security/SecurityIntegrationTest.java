@@ -73,7 +73,7 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
 
     @Test
     void reservationEndpointShouldRequireAuthentication() throws Exception {
-        mockMvc.perform(post("/api/v1/reservations/reserve"))
+        mockMvc.perform(post("/api/v1/me/reservation-requests"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -84,7 +84,7 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
         when(reservationService.reserveNearestSlot(user.getId())).thenReturn(reservation);
         when(loadMonitoringService.shouldQueueRequest()).thenReturn(false);
 
-        mockMvc.perform(post("/api/v1/reservations/reserve")
+        mockMvc.perform(post("/api/v1/me/reservation-requests")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"attacker@example.com\"}"))
@@ -102,14 +102,14 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
 
     @Test
     void invalidTokenShouldBeUnauthorized() throws Exception {
-        mockMvc.perform(post("/api/v1/reservations/reserve")
+        mockMvc.perform(post("/api/v1/me/reservation-requests")
                         .header("Authorization", "Bearer invalid-token"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void loginShouldRemainAvailableWithoutAuthentication() throws Exception {
-        mockMvc.perform(post("/api/auth/login")
+        mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"email":"security-user@example.com","password":"password"}
@@ -128,7 +128,7 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
         when(reservationQueueService.getRequestStatus("owned-request", user.getId()))
                 .thenReturn("PROCESSING");
 
-        mockMvc.perform(get("/api/v1/reservations/status/owned-request")
+        mockMvc.perform(get("/api/v1/me/reservation-requests/owned-request")
                         .header("Authorization", bearer(user)))
                 .andExpect(status().isOk());
 
@@ -140,7 +140,7 @@ class SecurityIntegrationTest extends ContainerIntegrationTestSupport {
         when(reservationQueueService.getRequestStatus("foreign-request", user.getId()))
                 .thenReturn(null);
 
-        mockMvc.perform(get("/api/v1/reservations/status/foreign-request")
+        mockMvc.perform(get("/api/v1/me/reservation-requests/foreign-request")
                         .header("Authorization", bearer(user)))
                 .andExpect(status().isNotFound());
     }

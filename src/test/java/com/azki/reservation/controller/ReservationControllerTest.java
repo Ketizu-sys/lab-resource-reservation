@@ -132,7 +132,7 @@ class ReservationControllerTest {
         doNothing().when(reservationService).cancelReservation(reservationId, 7L);
 
         // 执行：调用取消接口。
-        ResponseEntity<Void> response = reservationController.cancelReservation(reservationId, currentUser);
+        ResponseEntity<Void> response = reservationController.cancelOwnReservation(reservationId, currentUser);
 
         // 验证：返回 204 且服务方法被调用一次。
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());

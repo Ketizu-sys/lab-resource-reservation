@@ -174,7 +174,7 @@ erDiagram
 
 ### 6.1 登录
 
-入口：`POST /api/auth/login`
+入口：`POST /api/v1/auth/login`
 
 ```text
 LoginRequestDto 校验邮箱和密码非空
@@ -188,7 +188,7 @@ LoginRequestDto 校验邮箱和密码非空
 
 ### 6.2 创建预约：同步或排队
 
-入口：`POST /api/v1/reservations/reserve`
+入口：`POST /api/v1/me/reservation-requests`
 
 ```mermaid
 sequenceDiagram
@@ -240,7 +240,7 @@ sequenceDiagram
 | `reservation:status:{requestId}` | String | `QUEUED`、`PROCESSING`、`SUCCESS` 或带原因的 `FAILED` |
 | `nextSlot::single`（由 Spring Cache 生成） | Cache entry | 最近可用时段缓存 |
 
-计划中的队列流程是：定时批量从 List 左侧取出请求，调用 `ReservationService`；成功则更新状态，失败最多重试三次，最终进入 DLQ。客户端通过 `GET /api/v1/reservations/status/{requestId}` 查询状态。状态键默认保留 24 小时。
+计划中的队列流程是：定时批量从 List 左侧取出请求，调用 `ReservationService`；成功则更新状态，失败最多重试三次，最终进入 DLQ。客户端通过 `GET /api/v1/me/reservation-requests/{requestId}` 查询状态。状态键默认保留 24 小时。
 
 但当前入口类没有 `@EnableScheduling`，所以队列消费者、预约过期清理和 Redis 清理任务不会被调度执行。排队请求会停留在 `QUEUED`，除非在别处补充了调度启用配置。
 
@@ -248,7 +248,7 @@ sequenceDiagram
 
 ### 6.4 取消和过期
 
-取消入口：`DELETE /api/v1/reservations/cancel/{id}`。
+取消入口：`DELETE /api/v1/me/reservations/{id}`。
 
 它读取预约，将关联时段设为可用，删除预约，再清除最近时段缓存。当前没有检查“当前登录用户是否拥有这条预约”。
 
@@ -293,13 +293,13 @@ sequenceDiagram
 当前有两个实际问题：
 
 - 主配置没有启用该属性，因此默认完全不启用限流。
-- 过滤器匹配 `/api/reservations`，真实接口却位于 `/api/v1/reservations`；即使启用，预约接口也匹配不到。
+- 限流过滤器现已匹配 `/api/v1/me/reservations`、`/api/v1/me/reservation-requests` 和登录接口。
 
 限流桶还是单 JVM 全局桶，不区分用户/IP，多实例间也不共享。
 
 ### 8.3 安全边界
 
-`SecurityConfig` 把 `/api/v1/reservations/**` 全部设为 `permitAll`，所以创建预约、查询状态和取消预约实际上都不需要 JWT。JWT 体系目前主要证明“可以登录和解析身份”，没有保护核心预约接口。
+`SecurityConfig` 仅允许登录、Swagger 和健康检查匿名访问；`/api/v1/me/**` 必须使用 JWT，且预约详情、取消和请求状态都会校验当前用户身份。
 
 其他风险：
 
@@ -389,14 +389,14 @@ Compose 计划启动：
 
 | 方法 | 路径 | 请求 | 成功响应 | 当前鉴权 |
 |---|---|---|---|---|
-| POST | `/api/auth/login` | `email`, `password` | 200 + JWT 信息 | 无需 |
-| POST | `/api/v1/reservations/reserve` | `email` | 低负载 200；高负载 202 | 无需 |
-| GET | `/api/v1/reservations/status/{requestId}` | 路径参数 | 200 或 404 | 无需 |
-| DELETE | `/api/v1/reservations/cancel/{id}` | 预约 ID | 204 | 无需 |
+| POST | `/api/v1/auth/login` | `email`, `password` | 200 + JWT 信息 | 无需 |
+| POST | `/api/v1/me/reservation-requests` | 无请求体 | 低负载 200；高负载 202 | JWT |
+| GET | `/api/v1/me/reservation-requests/{requestId}` | 路径参数 | 200 或 404 | JWT + 所有权校验 |
+| DELETE | `/api/v1/me/reservations/{id}` | 预约 ID | 204 | JWT + 所有权校验 |
 
 Swagger UI 计划位于 `http://localhost:8080/swagger-ui/index.html`。
 
-仓库中的 Postman 集合仍使用 `/api/reservations` 等旧路径，与当前控制器不一致；调用时应改为上表路径。Postman 里的健康和指标 URL 也应指向管理端口 8081，除非调整应用配置。
+仓库中的 Postman 集合已同步为 `/api/v1` 下的最终路径。健康和指标 URL 应指向管理端口 8081，除非调整应用配置。
 
 ## 13. 测试现状
 

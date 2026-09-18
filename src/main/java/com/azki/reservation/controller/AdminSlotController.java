@@ -24,7 +24,7 @@ public class AdminSlotController {
     @PostMapping public ResponseEntity<AdminSlotResponse> create(@Valid @RequestBody AdminSlotRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
     }
-    @PostMapping("/batch") public ResponseEntity<List<AdminSlotResponse>> batch(@Valid @RequestBody BatchSlotRequest request) {
+    @PostMapping("/batches") public ResponseEntity<List<AdminSlotResponse>> batch(@Valid @RequestBody BatchSlotRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createBatch(request));
     }
     @GetMapping public Page<AdminSlotResponse> findAll(@ParameterObject Pageable pageable) { return service.findAll(pageable); }

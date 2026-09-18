@@ -53,7 +53,7 @@ exception   统一业务异常和 HTTP 错误响应
 登录入口：
 
 ```text
-POST /api/auth/login
+POST /api/v1/auth/login
 ```
 
 预约相关接口不再接收或信任客户端传入的邮箱。JWT 经 `JwtFilter` 解析后形成 `AuthenticatedUser`，业务层只使用其中的可信 `userId`。
@@ -83,7 +83,7 @@ UPDATE users SET role = 'ADMIN' WHERE email = 'johndoe1@example.com';
 
 | 方法 | 地址 | 作用 |
 |---|---|---|
-| POST | `/api/auth/login` | 使用邮箱和密码换取 JWT |
+| POST | `/api/v1/auth/login` | 使用邮箱和密码换取 JWT |
 
 ### 5.2 普通用户资源与时段查询
 
@@ -100,13 +100,12 @@ UPDATE users SET role = 'ADMIN' WHERE email = 'johndoe1@example.com';
 
 | 方法 | 地址 | 作用 |
 |---|---|---|
-| POST | `/api/v1/reservations` | 手工预约指定 `slotId` |
-| POST | `/api/v1/reservations/auto` | 自动预约最近可用时段 |
-| POST | `/api/v1/reservations/reserve` | 自动预约兼容地址 |
-| GET | `/api/v1/reservations/status/{requestId}` | 查询异步请求状态 |
+| POST | `/api/v1/me/reservations` | 当前用户手工预约指定 `slotId` |
+| POST | `/api/v1/me/reservation-requests` | 自动预约最近可用时段 |
+| GET | `/api/v1/me/reservation-requests/{requestId}` | 查询异步请求状态 |
 | GET | `/api/v1/me/reservations` | 分页查询当前用户预约，可按 status 过滤 |
-| GET | `/api/v1/reservations/{id}` | 查询自己的预约详情 |
-| DELETE | `/api/v1/reservations/{id}` | 取消自己的预约并保留历史 |
+| GET | `/api/v1/me/reservations/{id}` | 查询自己的预约详情 |
+| DELETE | `/api/v1/me/reservations/{id}` | 取消自己的预约并保留历史 |
 
 手工预约请求示例：
 
@@ -125,7 +124,7 @@ PUT    /api/v1/admin/resources/{id}
 DELETE /api/v1/admin/resources/{id}
 
 POST   /api/v1/admin/slots
-POST   /api/v1/admin/slots/batch
+POST   /api/v1/admin/slots/batches
 GET    /api/v1/admin/slots
 PUT    /api/v1/admin/slots/{id}
 DELETE /api/v1/admin/slots/{id}

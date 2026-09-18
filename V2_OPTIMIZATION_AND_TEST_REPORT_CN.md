@@ -131,10 +131,9 @@ Authorization: Bearer <JWT>
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| POST | `/api/v1/reservations` | 预约指定 `slotId` |
-| POST | `/api/v1/reservations/auto` | 自动选择最近可用时段 |
-| POST | `/api/v1/reservations/reserve` | 保留的自动预约兼容地址 |
-| GET | `/api/v1/reservations/status/{requestId}` | 查询异步预约状态 |
+| POST | `/api/v1/me/reservations` | 当前用户预约指定 `slotId` |
+| POST | `/api/v1/me/reservation-requests` | 自动选择最近可用时段 |
+| GET | `/api/v1/me/reservation-requests/{requestId}` | 查询异步预约状态 |
 
 手工预约会验证：
 
@@ -153,8 +152,8 @@ Authorization: Bearer <JWT>
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | GET | `/api/v1/me/reservations` | 分页查询当前用户预约，可按状态过滤 |
-| GET | `/api/v1/reservations/{id}` | 查询当前用户拥有的预约详情 |
-| DELETE | `/api/v1/reservations/{id}` | 取消当前用户拥有的有效预约 |
+| GET | `/api/v1/me/reservations/{id}` | 查询当前用户拥有的预约详情 |
+| DELETE | `/api/v1/me/reservations/{id}` | 取消当前用户拥有的有效预约 |
 
 对应服务会检查预约所有权，不通过客户端提供的用户标识判断归属。
 
@@ -173,7 +172,7 @@ DELETE /api/v1/admin/resources/{id}
 
 ```text
 POST   /api/v1/admin/slots
-POST   /api/v1/admin/slots/batch
+POST   /api/v1/admin/slots/batches
 GET    /api/v1/admin/slots
 PUT    /api/v1/admin/slots/{id}
 DELETE /api/v1/admin/slots/{id}
@@ -355,7 +354,7 @@ redis     Up (healthy)
 | `http://localhost:8081/actuator/health` | `UP` |
 | Redis `PING` | `PONG` |
 | PostgreSQL `pg_isready` | accepting connections |
-| `POST /api/auth/login` | 成功返回 JWT |
+| `POST /api/v1/auth/login` | 成功返回 JWT |
 | `GET /v3/api-docs` | 成功，包含 19 个业务路径 |
 
 Docker 构建过程中 Liquibase 成功执行全部适用的 changeset，应用随后正常启动。

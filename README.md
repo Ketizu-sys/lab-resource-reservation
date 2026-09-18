@@ -123,6 +123,21 @@ After starting the application, Swagger UI is available at:
 http://localhost:8080/swagger-ui/index.html
 ```
 
+The main REST endpoints use the `/api/v1` version prefix:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/auth/login` | Authenticate and obtain a JWT |
+| GET | `/api/v1/resources` | Browse active resources |
+| GET | `/api/v1/slots` | Browse available future slots |
+| GET / POST | `/api/v1/me/reservations` | List or create the current user's reservations |
+| GET / DELETE | `/api/v1/me/reservations/{id}` | Read or cancel an owned reservation |
+| POST | `/api/v1/me/reservation-requests` | Request automatic reservation processing |
+| GET | `/api/v1/me/reservation-requests/{requestId}` | Read an owned asynchronous request status |
+| Various | `/api/v1/admin/**` | Administrator resource, slot, and reservation operations |
+
+See [API_PATH_MIGRATION_CN.md](API_PATH_MIGRATION_CN.md) for the final path map.
+
 ## Requirements
 
 - JDK 21+

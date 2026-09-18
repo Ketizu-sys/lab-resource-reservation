@@ -326,7 +326,7 @@ leftPop(QUEUE_KEY)
 `SecurityConfig` 将：
 
 ```text
-/api/v1/reservations/**
+/api/v1/me/**
 ```
 
 整体配置为 `permitAll()`。
@@ -340,7 +340,7 @@ leftPop(QUEUE_KEY)
 
 #### 改进
 
-- 只允许 `/api/auth/login`、必要的 Swagger/健康端点匿名；
+- 只允许 `/api/v1/auth/login`、必要的 Swagger/健康端点匿名；
 - 创建预约从认证身份读取邮箱，不信任请求体中的邮箱；
 - 取消和查询必须验证预约/请求属于当前用户；
 - 管理员操作单独定义角色权限。
@@ -567,12 +567,12 @@ Compose 也没有映射 8081。容器内部健康检查不要求映射到宿主�
 Controller 当前路径是：
 
 ```text
-/api/v1/reservations/reserve
-/api/v1/reservations/status/{requestId}
-/api/v1/reservations/cancel/{id}
+/api/v1/me/reservation-requests
+/api/v1/me/reservation-requests/{requestId}
+/api/v1/me/reservations/{id}
 ```
 
-Postman 集合仍使用 `/api/reservations` 等旧路径；监控请求也访问 8080，而 Actuator 位于 8081。
+Postman 集合已经更新为最终 `/api/v1` 路径；监控请求应访问 Actuator 所在的 8081 端口。
 
 建议从 OpenAPI 自动生成客户端/测试集合，或至少在 CI 中执行契约测试，避免文档、示例和实现长期分叉。
 

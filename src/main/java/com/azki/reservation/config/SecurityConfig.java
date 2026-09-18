@@ -34,14 +34,14 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                            "/api/auth/**",
+                            "/api/v1/auth/**",
                             "/swagger-ui/**",
                             "/v3/api-docs/**",
                             "/actuator/health",
                             "/actuator/health/**"
                         ).permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/reservations/**", "/api/v1/me/**").authenticated()
+                        .requestMatchers("/api/v1/me/**").authenticated()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(sess -> sess

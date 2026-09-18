@@ -28,11 +28,11 @@ class RateLimitFilterTest {
 
     @Test
     void shouldReturn429WhenSameClientExceedsReservationLimit() throws Exception {
-        MockHttpServletRequest first = request("/api/v1/reservations/reserve", "10.0.0.1");
+        MockHttpServletRequest first = request("/api/v1/me/reservation-requests", "10.0.0.1");
         MockHttpServletResponse firstResponse = new MockHttpServletResponse();
         filter.doFilter(first, firstResponse, new MockFilterChain());
 
-        MockHttpServletRequest second = request("/api/v1/reservations/reserve", "10.0.0.1");
+        MockHttpServletRequest second = request("/api/v1/me/reservation-requests", "10.0.0.1");
         MockHttpServletResponse secondResponse = new MockHttpServletResponse();
         filter.doFilter(second, secondResponse, new MockFilterChain());
 
@@ -43,15 +43,15 @@ class RateLimitFilterTest {
 
     @Test
     void shouldKeepDifferentClientsAndRouteGroupsIndependent() throws Exception {
-        filter.doFilter(request("/api/v1/reservations/reserve", "10.0.0.1"),
+        filter.doFilter(request("/api/v1/me/reservation-requests", "10.0.0.1"),
             new MockHttpServletResponse(), new MockFilterChain());
 
         MockHttpServletResponse otherClientResponse = new MockHttpServletResponse();
-        filter.doFilter(request("/api/v1/reservations/reserve", "10.0.0.2"),
+        filter.doFilter(request("/api/v1/me/reservation-requests", "10.0.0.2"),
             otherClientResponse, new MockFilterChain());
 
         MockHttpServletResponse loginResponse = new MockHttpServletResponse();
-        filter.doFilter(request("/api/auth/login", "10.0.0.1"),
+        filter.doFilter(request("/api/v1/auth/login", "10.0.0.1"),
             loginResponse, new MockFilterChain());
 
         assertEquals(200, otherClientResponse.getStatus());

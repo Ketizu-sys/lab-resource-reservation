@@ -24,12 +24,13 @@
 							"raw": "{\n    \"email\": \"user@azki.com\",\n    \"password\": \"password123\"\n}"
 						},
 						"url": {
-							"raw": "{{baseUrl}}/api/auth/login",
+							"raw": "{{baseUrl}}/api/v1/auth/login",
 							"host": [
 								"{{baseUrl}}"
 							],
 							"path": [
 								"api",
+								"v1",
 								"auth",
 								"login"
 							]
@@ -45,7 +46,7 @@
 			"name": "Reservations",
 			"item": [
 				{
-					"name": "Create Reservation",
+					"name": "Create Automatic Reservation Request",
 					"request": {
 						"auth": {
 							"type": "bearer",
@@ -64,18 +65,16 @@
 								"value": "application/json"
 							}
 						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"email\": \"user@azki.com\"\n}"
-						},
 						"url": {
-							"raw": "{{baseUrl}}/api/reservations",
+							"raw": "{{baseUrl}}/api/v1/me/reservation-requests",
 							"host": [
 								"{{baseUrl}}"
 							],
 							"path": [
 								"api",
-								"reservations"
+								"v1",
+								"me",
+								"reservation-requests"
 							]
 						},
 						"description": "Request a new reservation for the nearest available time slot."
@@ -98,14 +97,15 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{baseUrl}}/api/reservations/status/{{requestId}}",
+							"raw": "{{baseUrl}}/api/v1/me/reservation-requests/{{requestId}}",
 							"host": [
 								"{{baseUrl}}"
 							],
 							"path": [
 								"api",
-								"reservations",
-								"status",
+								"v1",
+								"me",
+								"reservation-requests",
 								"{{requestId}}"
 							]
 						},
@@ -129,12 +129,14 @@
 						"method": "DELETE",
 						"header": [],
 						"url": {
-							"raw": "{{baseUrl}}/api/reservations/{{reservationId}}",
+							"raw": "{{baseUrl}}/api/v1/me/reservations/{{reservationId}}",
 							"host": [
 								"{{baseUrl}}"
 							],
 							"path": [
 								"api",
+								"v1",
+								"me",
 								"reservations",
 								"{{reservationId}}"
 							]
@@ -236,7 +238,7 @@
 					"}",
 					"",
 					"// Extract requestId from create reservation response",
-					"if (pm.response.code === 202 && pm.info.requestName === \"Create Reservation\") {",
+					"if (pm.response.code === 202 && pm.info.requestName === \"Create Automatic Reservation Request\") {",
 					"    const responseJson = pm.response.json();",
 					"    if (responseJson.requestId) {",
 					"        pm.environment.set(\"requestId\", responseJson.requestId);",

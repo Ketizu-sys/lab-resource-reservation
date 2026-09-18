@@ -57,11 +57,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
-        return !uri.startsWith("/api/v1/reservations") && !uri.equals("/api/auth/login");
+        return !uri.startsWith("/api/v1/me/reservations")
+                && !uri.startsWith("/api/v1/me/reservation-requests")
+                && !uri.equals("/api/v1/auth/login");
     }
 
     private String routeGroup(String uri) {
-        return uri.equals("/api/auth/login") ? "login" : "reservation";
+        return uri.equals("/api/v1/auth/login") ? "login" : "reservation";
     }
 
     private String clientKey(HttpServletRequest request) {

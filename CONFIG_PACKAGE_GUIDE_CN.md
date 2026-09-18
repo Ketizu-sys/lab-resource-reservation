@@ -393,7 +393,7 @@ Bucket4j.builder().addLimit(limit).build()
 
 ### 8.5 当前路径问题
 
-限流过滤器判断的路径是 `/api/reservations`，真实控制器路径是 `/api/v1/reservations`。因此即便打开配置，当前预约接口仍不会进入限流分支。这个问题位于 `RateLimitFilter`，而不是本配置类本身。
+限流过滤器当前匹配 `/api/v1/me/reservations`、`/api/v1/me/reservation-requests` 和 `/api/v1/auth/login`，并按登录与预约两个路由组分别限流。
 
 ## 9. `RedisConfig.java`
 
@@ -642,11 +642,13 @@ public SecurityConfig(JwtFilter jwtFilter) {
 
 ```java
 .requestMatchers(
-    "/api/auth/**",
+    "/api/v1/auth/**",
     "/swagger-ui/**",
     "/v3/api-docs/**",
-    "/api/v1/reservations/**"
+    "/api/v1/auth/**"
 ).permitAll()
+.requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+.requestMatchers("/api/v1/me/**").authenticated()
 .anyRequest().authenticated()
 ```
 
@@ -861,7 +863,7 @@ Spring 不保证简单按文件名顺序加载，而是根据依赖关系组织 
 ### 高优先级
 
 1. **预约接口全部匿名开放**：需要决定哪些接口必须登录，并给取消操作增加所有权校验。
-2. **限流路径不匹配**：配置即使开启，过滤器也匹配不到 `/api/v1/reservations`。
+2. **限流路径同步**：修改 Controller 路径时，需要同步维护 `RateLimitFilter` 的匹配范围。
 3. **Docker 健康检查需做运行验收**：端口、探针工具和 PostgreSQL 用户已修正，仍应在网络允许拉取基础镜像时确认三个服务均为 healthy。
 4. **审计 Bean 重复注册**：`@Component` 与 `@Bean` 保留一个即可。
 

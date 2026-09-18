@@ -33,7 +33,7 @@ import jakarta.validation.Valid;
 @Tag(name = "预约管理", description = "创建预约、查询排队状态和取消预约")
 @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 @RestController
-@RequestMapping("/api/v1/reservations")
+@RequestMapping("/api/v1/me")
 public class ReservationController {
 
     private static final Logger logger = LoggerFactory.getLogger(ReservationController.class);
@@ -58,7 +58,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "查询自己的预约详情")
-    @GetMapping("/{id}")
+    @GetMapping("/reservations/{id}")
     public ReservationDetailsDto findReservation(
             @PathVariable Long id,
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
@@ -66,7 +66,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "取消自己的预约")
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/reservations/{id}")
     public ResponseEntity<Void> cancelOwnReservation(
             @PathVariable Long id,
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
@@ -75,7 +75,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "预约指定时段")
-    @PostMapping
+    @PostMapping("/reservations")
     public ResponseEntity<ReservationDetailsDto> reserveSlot(
             @Valid @RequestBody ManualReservationRequest request,
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
@@ -84,7 +84,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "预约最近的空闲时段")
-    @PostMapping({"/auto", "/reserve"})
+    @PostMapping("/reservation-requests")
     public ResponseEntity<ReservationResponseDto> reserveNearest(
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
         ReservationRequestDto request = new ReservationRequestDto();
@@ -115,7 +115,7 @@ public class ReservationController {
     }
 
     @Operation(summary = "根据 requestId 查询排队请求状态")
-    @GetMapping("/status/{requestId}")
+    @GetMapping("/reservation-requests/{requestId}")
     public ResponseEntity<ReservationResponseDto> getReservationStatus(
             @PathVariable String requestId,
             @AuthenticationPrincipal AuthenticatedUser currentUser) {
@@ -124,15 +124,6 @@ public class ReservationController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(new ReservationResponseDto(requestId, status));
-    }
-
-    @Operation(summary = "根据预约 ID 取消预约")
-    @DeleteMapping("/cancel/{id}")
-    public ResponseEntity<Void> cancelReservation(
-            @PathVariable Long id,
-            @AuthenticationPrincipal AuthenticatedUser currentUser) {
-        reservationService.cancelReservation(id, currentUser.id());
-        return ResponseEntity.noContent().build();
     }
 }
 
