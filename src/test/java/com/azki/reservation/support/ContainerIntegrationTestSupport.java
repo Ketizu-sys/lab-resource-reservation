@@ -6,6 +6,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 
+import java.time.Duration;
+
 /**
  * 集成测试共享的 PostgreSQL 和 Redis 容器。
  * 测试类需配合 @Testcontainers(disabledWithoutDocker = true)，无 Docker 时明确跳过。
@@ -17,12 +19,15 @@ public abstract class ContainerIntegrationTestSupport {
             new PostgreSQLContainer<>("postgres:15-alpine")
                     .withDatabaseName("reservation_test")
                     .withUsername("reservation_test")
-                    .withPassword("reservation_test");
+                    .withPassword("reservation_test")
+                    // Docker Desktop 负载较高时初始化可能超过 Testcontainers 默认的 60 秒。
+                    .withStartupTimeout(Duration.ofMinutes(2));
 
     @Container
     protected static final GenericContainer<?> REDIS =
             new GenericContainer<>("redis:7-alpine")
-                    .withExposedPorts(6379);
+                    .withExposedPorts(6379)
+                    .withStartupTimeout(Duration.ofMinutes(2));
 
     @DynamicPropertySource
     static void registerContainerProperties(DynamicPropertyRegistry registry) {

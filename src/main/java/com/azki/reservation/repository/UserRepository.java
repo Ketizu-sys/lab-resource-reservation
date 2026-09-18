@@ -13,6 +13,12 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
+    /** 注册时快速检查邮箱是否已使用；最终一致性仍由数据库唯一约束保证。 */
+    boolean existsByEmail(String email);
+
+    /** users.user_name 已有唯一约束，因此用户名冲突也需要在注册阶段报告。 */
+    boolean existsByUserName(String userName);
+
     /**
      * 按邮箱查找用户并按主键升序返回。
      * 正常情况下 email 唯一；返回 List 是为了在历史脏数据存在重复值时仍能兼容读取。

@@ -7,6 +7,7 @@ import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
 import com.azki.reservation.exception.ResourceNotFoundException;
 import com.azki.reservation.exception.SlotNotFoundException;
+import com.azki.reservation.exception.UserRegistrationConflictException;
 import com.azki.reservation.exception.ReservationNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -35,6 +36,14 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(UserRegistrationConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ResponseEntity<ApiError> handleUserRegistrationConflict(
+            UserRegistrationConflictException ex, HttpServletRequest request) {
+        logger.warn("User registration conflict: {}", ex.getMessage());
+        return buildErrorResponse(ex, ex.getMessage(), HttpStatus.CONFLICT, request.getRequestURI());
+    }
 
     @ExceptionHandler(DuplicateReservationException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
