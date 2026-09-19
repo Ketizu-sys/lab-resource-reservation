@@ -33,3 +33,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### WorkBuddy 本地工作记忆（非项目产物，勿提交） ###
+.workbuddy/
+
+### 说明 ###
+# frontend/node_modules/、frontend/dist/、frontend/.vite/
+# 已由 frontend/.gitignore 覆盖，此处不重复添加。
