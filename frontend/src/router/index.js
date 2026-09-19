@@ -1,11 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { resolveGuardRedirect } from './guards'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import ResourcesView from '../views/ResourcesView.vue'
 import SlotsView from '../views/SlotsView.vue'
 import MyReservationsView from '../views/MyReservationsView.vue'
 import AutoReservationView from '../views/AutoReservationView.vue'
+import ResourceAdminView from '../views/admin/ResourceAdminView.vue'
+import SlotAdminView from '../views/admin/SlotAdminView.vue'
+import ReservationAdminView from '../views/admin/ReservationAdminView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,15 +21,41 @@ const router = createRouter({
     { path: '/slots', name: 'slots', component: SlotsView, meta: { requiresAuth: true } },
     { path: '/my-reservations', name: 'my-reservations', component: MyReservationsView, meta: { requiresAuth: true } },
     { path: '/auto-reservation', name: 'auto-reservation', component: AutoReservationView, meta: { requiresAuth: true } },
+    {
+      path: '/admin/resources',
+      name: 'admin-resources',
+      component: ResourceAdminView,
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/slots',
+      name: 'admin-slots',
+      component: SlotAdminView,
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/reservations',
+      name: 'admin-reservations',
+      component: ReservationAdminView,
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/resources' },
   ],
 })
 
 router.beforeEach((to) => {
   const authStore = useAuthStore()
-  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    return { name: 'login', query: { redirect: to.fullPath } }
-  }
+
+  // 前端守卫只负责路由体验；真正的权限校验始终由后端 Spring Security 完成，
+  // 绕过前端直接请求 admin 接口仍会被后端以 403 拒绝。
+  const redirect = resolveGuardRedirect({
+    isAuthenticated: authStore.isAuthenticated,
+    role: authStore.role,
+    meta: to.meta,
+    fullPath: to.fullPath,
+  })
+  if (redirect) return redirect
+
   if (to.name === 'login' && authStore.isAuthenticated) {
     return { name: 'resources' }
   }

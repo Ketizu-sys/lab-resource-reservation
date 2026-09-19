@@ -2,12 +2,14 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { isAdmin } from './router/guards'
 
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 const showHeader = computed(() => authStore.isAuthenticated && !['login', 'register'].includes(route.name))
+const showAdminMenu = computed(() => isAdmin(authStore.role))
 
 function logout() {
   authStore.clearSession()
@@ -26,6 +28,12 @@ function logout() {
         <el-button text @click="$router.push('/resources')">资源</el-button>
         <el-button text @click="$router.push('/auto-reservation')">自动预约</el-button>
         <el-button text @click="$router.push('/my-reservations')">我的预约</el-button>
+        <template v-if="showAdminMenu">
+          <el-divider direction="vertical" />
+          <el-button text @click="$router.push('/admin/resources')">管理资源</el-button>
+          <el-button text @click="$router.push('/admin/slots')">管理时段</el-button>
+          <el-button text @click="$router.push('/admin/reservations')">管理预约</el-button>
+        </template>
         <el-button type="danger" plain @click="logout">退出登录</el-button>
       </div>
     </el-header>
