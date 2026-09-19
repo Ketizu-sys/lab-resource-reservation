@@ -5,6 +5,7 @@ import com.azki.reservation.entity.*;
 import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.ResourceNotFoundException;
 import com.azki.reservation.exception.SlotNotFoundException;
+import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.ResourceRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.util.*;
 public class AdminSlotService {
     private final TimeSlotRepository slots;
     private final ResourceRepository resources;
+    private final ReservationRepository reservations;
 
     @Transactional public AdminSlotResponse create(AdminSlotRequest request) {
         return toDto(saveNew(request.resourceId(), request.startTime(), request.endTime()));
@@ -59,10 +61,20 @@ public class AdminSlotService {
         return toDto(slots.saveAndFlush(slot));
     }
 
+    /**
+     * 只有从未产生过预约历史的时段才允许物理删除。
+     *
+     * <p>取消和完成都会保留 reservation 行，并把 available_slot.is_reserved 置回 false。
+     * 因此 is_reserved 只能识别 ACTIVE 占用，不能作为外键安全性的依据；
+     * 必须再按预约历史判断一次，否则数据库会抛出外键约束异常。</p>
+     */
     @Transactional
     public void delete(Long id) {
         AvailableSlot slot = slots.findByIdForUpdate(id).orElseThrow(() -> notFound(id));
         if (slot.isReserved()) throw new BusinessException("Reserved slot cannot be deleted");
+        if (reservations.existsByAvailableSlotId(id)) {
+            throw new BusinessException("Time slot has reservation history and cannot be deleted");
+        }
         slots.delete(slot);
     }
 

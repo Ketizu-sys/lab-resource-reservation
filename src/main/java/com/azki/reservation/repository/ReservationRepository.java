@@ -34,6 +34,24 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long>,
     java.util.Optional<Reservation> findByIdForUpdate(@Param("id") Long id);
 
     /**
+     * 判断某个时段是否存在任何预约历史记录。
+     *
+     * <p>取消和完成都会保留 reservation 行，只把 available_slot.is_reserved 置回 false，
+     * 因此删除时段前必须按“是否存在历史”判断，否则会撞上 reservation 的外键约束。</p>
+     */
+    boolean existsByAvailableSlotId(Long availableSlotId);
+
+    /**
+     * 按异步队列的 requestId 查找已经落库的预约，作为数据库侧幂等查询入口。
+     *
+     * @param requestId 队列请求标识；手工预约为 NULL，不会被该条件命中
+     */
+    java.util.Optional<Reservation> findByRequestId(String requestId);
+
+    /** 判断某个异步 requestId 是否已经落库，用于消费前的快速幂等判断。 */
+    boolean existsByRequestId(String requestId);
+
+    /**
      * 判断用户是否存在与候选时段重叠的有效预约。
      * 采用半开区间判断：[开始时间, 结束时间)，首尾相接的预约不算重叠。
      */
