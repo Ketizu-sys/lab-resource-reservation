@@ -14,7 +14,7 @@
 | 后端重心 | 高并发下的预约一致性、异步削峰、生命周期管理 |
 | 存储分工 | PostgreSQL 存最终事实，Redis 存过程状态 |
 | 前端 | 用户端闭环 + 管理员端三页管理 + 异步队列状态可视化 |
-| 当前状态 | V3 完成，核心功能已实现并通过自动化测试与人工验收 |
+| 当前状态 | 核心预约、异步调度、用户端与管理员端功能均已实现 |
 
 ---
 
@@ -308,14 +308,12 @@ npm run build
 
 ---
 
-## 十一、项目状态
-
-**V3 完成。**
+## 十一、系统能力
 
 - 用户端闭环：注册 → 登录 → 浏览资源 → 查询时段 → 预约 → 查看 → 取消
-- 自动预约：同步（200）与异步（202 + Redis 队列）双路径均已真实验证
-- 管理员端：资源 / 时段 / 预约三页管理
-- 后端与前端自动化测试全部通过，关键链路已人工验收
+- 自动预约：支持同步（200）与异步（202 + Redis 队列）双路径
+- 管理员端：资源 / 时段 / 预约三类管理能力
+- 自动化测试覆盖认证鉴权、数据库迁移、并发一致性、Redis 队列与前端核心逻辑
 
 ---
 
@@ -383,16 +381,12 @@ frontend/src/
   views/        页面（含 views/admin 管理端）
 ```
 
-## License
-
-Free To Use License (FTUL). See `LICENSE` for details.
-
 ## Author
 
 Original Author:
-**Hooman Yarahmadi** — original reservation baseline (V1)
+**Hooman Yarahmadi** — original reservation baseline
 GitHub: [@HoomanDevp](https://github.com/HoomanDevp)
 
-Maintainer / V2 & V3 Refactor:
-**&lt;Your Name&gt;** — domain model redesign, admin console, async queue hardening, Vue 3 frontend
-GitHub: &lt;Your GitHub&gt;
+本项目基于 [HoomanDevp/reservation](https://github.com/HoomanDevp/reservation) 进行二次开发。
+
+Maintainer / V2 & V3 Refactor: **Ketizu-sys** ([@Ketizu-sys](https://github.com/Ketizu-sys))
