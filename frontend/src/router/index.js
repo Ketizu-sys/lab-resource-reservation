@@ -1,15 +1,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { resolveGuardRedirect } from './guards'
+// 登录/注册是首屏直达页，静态引入；其余页面按需加载，避免全部打进主 chunk。
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
-import ResourcesView from '../views/ResourcesView.vue'
-import SlotsView from '../views/SlotsView.vue'
-import MyReservationsView from '../views/MyReservationsView.vue'
-import AutoReservationView from '../views/AutoReservationView.vue'
-import ResourceAdminView from '../views/admin/ResourceAdminView.vue'
-import SlotAdminView from '../views/admin/SlotAdminView.vue'
-import ReservationAdminView from '../views/admin/ReservationAdminView.vue'
+
+const ResourcesView = () => import('../views/ResourcesView.vue')
+const SlotsView = () => import('../views/SlotsView.vue')
+const MyReservationsView = () => import('../views/MyReservationsView.vue')
+const AutoReservationView = () => import('../views/AutoReservationView.vue')
+const ResourceAdminView = () => import('../views/admin/ResourceAdminView.vue')
+const SlotAdminView = () => import('../views/admin/SlotAdminView.vue')
+const ReservationAdminView = () => import('../views/admin/ReservationAdminView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
