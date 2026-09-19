@@ -10,6 +10,7 @@ import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
 import com.azki.reservation.exception.ReservationNotFoundException;
+import com.azki.reservation.exception.RequestAlreadyProcessedException;
 import com.azki.reservation.repository.ReservationRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
@@ -52,6 +53,9 @@ public class ReservationService {
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final Logger logger = LoggerFactory.getLogger(ReservationService.class);
 
+    /** reservation.request_id 上的唯一约束名，用于把并发冲突识别为幂等命中。 */
+    static final String REQUEST_ID_CONSTRAINT = "uk_reservation_request_id";
+
     /**
      * 查询最近空闲时段，实际缓存逻辑委托给独立 Bean，以确保经过 Spring 缓存代理。
      *
@@ -71,6 +75,7 @@ public class ReservationService {
      * @return 已持久化的预约记录
      * @throws BusinessException 用户不存在、预约时间重叠或没有可用时段时抛出
      */
+    /** 同步链路入口：不携带异步幂等键，写入的预约 request_id 为 NULL。 */
     @Retryable(
         retryFor = OptimisticLockingFailureException.class,
         notRecoverable = BusinessException.class,
@@ -79,6 +84,23 @@ public class ReservationService {
     )
     @Transactional
     public Reservation reserveNearestSlot(Long userId) {
+        return reserveNearestSlot(userId, null);
+    }
+
+    /**
+     * 异步队列入口：以 requestId 作为数据库幂等键。
+     *
+     * <p>若数据库已经存在该 requestId 对应的预约，直接返回既有记录，
+     * 不再重复占用时段，从而把 at-least-once 投递收敛为 effectively-once 业务效果。</p>
+     */
+    @Retryable(
+        retryFor = OptimisticLockingFailureException.class,
+        notRecoverable = BusinessException.class,
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 10, multiplier = 1.5)
+    )
+    @Transactional
+    public Reservation reserveNearestSlot(Long userId, String requestId) {
         Timer.Sample processingSample = Timer.start(meterRegistry);
         logger.info("Attempting to reserve nearest slot for user id: {}", userId);
         try {
@@ -90,7 +112,7 @@ public class ReservationService {
                     });
             logger.debug("Found user: id={}, email={}", user.getId(), user.getEmail());
 
-            Reservation reservation = attemptReservation(user);
+            Reservation reservation = requestId == null ? attemptReservation(user) : attemptReservation(user, requestId);
             logger.info("Successfully created reservation: id={} for user={} at time={}",
                     reservation.getId(), user.getEmail(), reservation.getAvailableSlot().getStartTime());
             meterRegistry.counter("reservation.success").increment();
@@ -104,13 +126,34 @@ public class ReservationService {
         }
     }
 
-    /** 在同一事务中锁定用户和指定时段，并完成全部预约校验与写入。 */
+    /** 在同一事务中锁定用户和指定时段，并完成全部预约校验与写入；同步入口不带幂等键。 */
     @Transactional
     public Reservation reserveSlot(Long userId, Long slotId) {
+        return reserveSlot(userId, slotId, null);
+    }
+
+    /**
+     * 异步队列使用的手工预约入口，以 requestId 作为数据库幂等键。
+     *
+     * @param requestId 队列请求标识；为 null 时退化为普通同步预约
+     */
+    @Transactional
+    public Reservation reserveSlot(Long userId, Long slotId, String requestId) {
         User user = lockUser(userId);
         AvailableSlot slot = timeSlotRepository.findByIdForUpdate(slotId)
                 .orElseThrow(() -> new ReservationNotAvailableException("Time slot not found"));
-        return createReservation(user, slot);
+        return createReservation(user, slot, requestId);
+    }
+
+    /**
+     * 数据库是否已经存在该 requestId 对应的预约。
+     *
+     * <p>PostgreSQL 是最终事实源；Redis 中的 SUCCESS 状态丢失时，
+     * 队列消费者用该方法判断业务是否已经完成，并据此恢复状态。</p>
+     */
+    @Transactional(readOnly = true)
+    public boolean hasProcessedRequest(String requestId) {
+        return requestId != null && reservationRepository.existsByRequestId(requestId);
     }
 
     /**
@@ -138,6 +181,10 @@ public class ReservationService {
      * @throws OptimisticLockingFailureException 保存期间发现实体版本冲突
      */
     protected Reservation attemptReservation(User user) {
+        return attemptReservation(user, null);
+    }
+
+    protected Reservation attemptReservation(User user, String requestId) {
         // 写流程直接从数据库领取并锁定一条候选记录，不能依赖可能过期的缓存值。
         Timer.Sample selectionSample = Timer.start(meterRegistry);
         AvailableSlot freshSlot;
@@ -148,11 +195,30 @@ public class ReservationService {
             selectionSample.stop(meterRegistry.timer("reservation.slot.selection.time"));
         }
 
-        return createReservation(user, freshSlot);
+        return createReservation(user, freshSlot, requestId);
     }
 
     /** 手工和自动预约共同使用的最终业务规则与写库入口。 */
     protected Reservation createReservation(User user, AvailableSlot freshSlot) {
+        return createReservation(user, freshSlot, null);
+    }
+
+    /**
+     * 手工和自动预约共同使用的最终业务规则与写库入口。
+     *
+     * @param requestId 异步队列幂等键；为 null 时表示同步预约
+     */
+    protected Reservation createReservation(User user, AvailableSlot freshSlot, String requestId) {
+        // 应用级幂等快速路径：数据库已经有该 requestId，说明这条消息的业务效果已经发生。
+        if (requestId != null) {
+            Optional<Reservation> existing = reservationRepository.findByRequestId(requestId);
+            if (existing.isPresent()) {
+                logger.info("Async request {} already materialized as reservation {}", requestId, existing.get().getId());
+                meterRegistry.counter("reservation.idempotent_hit").increment();
+                return existing.get();
+            }
+        }
+
         validateSlotCanBeReserved(freshSlot);
 
         // 允许同一用户拥有多个未来预约，但候选时段不能与其 ACTIVE 预约重叠。
@@ -177,17 +243,45 @@ public class ReservationService {
         reservation.setAvailableSlot(savedSlot);
         reservation.setReservedAt(Instant.now(reservationClock));
         reservation.setStatus(ReservationStatus.ACTIVE);
+        reservation.setRequestId(requestId);
 
         try {
-            // 立即 flush，让用户/时段唯一约束异常在本方法内出现并转换为业务异常。
+            // 立即 flush，让用户/时段/requestId 唯一约束异常在本方法内出现并转换为业务异常。
             Reservation saved = reservationRepository.saveAndFlush(reservation);
             logger.info("Reservation {} created for user {} at slot {}",
                 saved.getId(), user.getEmail(), savedSlot.getId());
             return saved;
         } catch (DataIntegrityViolationException e) {
+            // 只有 requestId 唯一约束冲突才算“另一个消费者已经完成”，
+            // 其他约束（例如同一时段的 ACTIVE 唯一索引）仍然按重复预约处理。
+            if (requestId != null && isRequestIdConflict(e)) {
+                logger.warn("Database rejected replayed async request {} for slot {}", requestId, savedSlot.getId());
+                meterRegistry.counter("reservation.idempotent_conflict").increment();
+                throw new RequestAlreadyProcessedException(requestId);
+            }
             logger.warn("Database rejected duplicate active reservation for slot {}", savedSlot.getId());
             throw new DuplicateReservationException("Time slot already has an active reservation");
         }
+    }
+
+    /**
+     * 判断数据库完整性异常是否来自 request_id 唯一约束。
+     *
+     * <p>优先读取 Hibernate 暴露的约束名；取不到时退回消息匹配。
+     * 该方法只认 uk_reservation_request_id，其他任何约束都不会被误判为幂等冲突，
+     * 因此不会吞掉真正的业务数据异常。</p>
+     */
+    private boolean isRequestIdConflict(DataIntegrityViolationException e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException constraintViolation
+                    && REQUEST_ID_CONSTRAINT.equals(constraintViolation.getConstraintName())) {
+                return true;
+            }
+            if (cause.getMessage() != null && cause.getMessage().contains(REQUEST_ID_CONSTRAINT)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private User lockUser(Long userId) {

@@ -138,6 +138,35 @@ POST /api/v1/me/reservation-requests
 - **语义**：at-least-once —— 重复请求由业务层的重叠检测拦截，终态记为 FAILED 而非进入 DLQ
 - **TTL**：请求状态 24 小时过期，过期后查询返回 404
 
+#### 数据库侧幂等（requestId）
+
+消息可能被重复投递，因此单靠 Redis 状态不足以保证业务只发生一次：
+
+- **PostgreSQL 是最终事实源**，Redis 只是过程状态与缓存层
+- 异步预约写入 `reservation.request_id`，并由 Liquibase changeset
+  `9-reservation-request-id` 建立 `UNIQUE(request_id)` 约束 —— 该约束允许多条
+  `NULL`，因此手工预约与同步直接预约不受影响
+- 消费者在处理前先做应用级查询；真正的并发一致性由数据库唯一约束兜底，
+  而不是「先查再写」
+- 若发生唯一约束冲突，只认 `uk_reservation_request_id`，
+  确认数据库已有该 requestId 后按幂等成功处理并向 Redis 恢复 `SUCCESS`；
+  其他约束冲突仍按业务失败处理，不会被吞掉
+- **DB 已成功但 Redis 状态丢失**时（进程崩溃、写入失败），以数据库为准恢复 `SUCCESS`
+
+合起来可以准确描述为：**at-least-once delivery + database idempotency +
+effectively-once business effect**。不应表述为 exactly-once message delivery。
+
+#### 为什么当前选择 Redis 而不是 RabbitMQ / Kafka
+
+这是当前场景下的工程权衡，不代表 Redis 优于消息队列：
+
+- 系统已经依赖 Redis（缓存、限流、会话无关状态），引入新中间件会增加运维面
+- 当前是单体应用、单一预约消费者、消费链路短
+- 不需要长期事件保留、多消费者组或事件流 replay
+
+演进方向：需要任务队列语义、复杂 ack / routing / 延迟队列时选 **RabbitMQ**；
+需要高吞吐事件流、多消费者组、长期保留与 replay 时选 **Kafka**。
+
 ### 3. 预约生命周期
 
 ```text

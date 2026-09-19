@@ -50,6 +50,16 @@ public class Reservation extends Auditable{
     @Column(name = "cancel_reason", length = 500)
     private String cancelReason;
 
+    /**
+     * 异步队列请求的幂等键。
+     *
+     * <p>仅 Redis 异步预约写入；手工预约和同步直接预约保持 NULL。
+     * 数据库上存在 uk_reservation_request_id 唯一约束，
+     * 因此消息重放时最多只能生成一条预约记录。</p>
+     */
+    @Column(name = "request_id", length = 64)
+    private String requestId;
+
     @Override
     public final boolean equals(Object o) {
         // Hibernate 可能传入代理对象，因此先取得代理背后的真实实体类型再比较。

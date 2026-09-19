@@ -6,6 +6,7 @@ import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.DuplicateReservationException;
 import com.azki.reservation.exception.ReservationCapacityExceededException;
 import com.azki.reservation.exception.ReservationNotAvailableException;
+import com.azki.reservation.exception.RequestAlreadyProcessedException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
@@ -310,8 +311,18 @@ public class ReservationQueueService {
         return size != null ? size : 0;
     }
 
+    /**
+     * 判断该请求是否已经产生业务效果。
+     *
+     * <p>Redis 只是状态缓存层，PostgreSQL 才是最终事实源。
+     * 当 Redis 的 SUCCESS 状态因进程崩溃或写入失败而丢失时，
+     * 这里会以数据库中的 request_id 幂等键为准进行判定。</p>
+     */
     private boolean isAlreadyProcessed(String requestId) {
-        return RequestStatus.SUCCESS.name().equals(getRawRequestStatus(requestId));
+        if (RequestStatus.SUCCESS.name().equals(getRawRequestStatus(requestId))) {
+            return true;
+        }
+        return reservationService.hasProcessedRequest(requestId);
     }
 
     @Scheduled(fixedDelayString = "${reservation.queue.poll-interval-ms:100}")
@@ -340,12 +351,21 @@ public class ReservationQueueService {
             updateStatus(item.requestId, RequestStatus.PROCESSING);
             try {
                 if (item.request.getMode() == ReservationMode.MANUAL) {
-                    reservationService.reserveSlot(item.request.getUserId(), item.request.getSlotId());
+                    reservationService.reserveSlot(item.request.getUserId(), item.request.getSlotId(), item.requestId);
                 } else {
-                    reservationService.reserveNearestSlot(item.request.getUserId());
+                    reservationService.reserveNearestSlot(item.request.getUserId(), item.requestId);
                 }
                 meterRegistry.counter("reservation.queue.processed").increment();
                 complete(claimed, RequestStatus.SUCCESS);
+            } catch (RequestAlreadyProcessedException e) {
+                // 数据库唯一约束已经证明该 requestId 的业务效果存在，按幂等成功处理。
+                logger.info("Async request {} already persisted; treating as idempotent success", item.requestId);
+                meterRegistry.counter("reservation.queue.idempotent").increment();
+                if (reservationService.hasProcessedRequest(item.requestId)) {
+                    complete(claimed, RequestStatus.SUCCESS);
+                } else {
+                    handleRetryableError(claimed, e, "idempotency");
+                }
             } catch (DuplicateReservationException e) {
                 logger.info("Skipping duplicate reservation for user: {}", item.request.getUserId());
                 meterRegistry.counter("reservation.queue.duplicate").increment();

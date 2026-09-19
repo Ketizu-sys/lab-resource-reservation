@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -68,7 +70,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     void retryingFirstMessageShouldNotOverwriteSecondMessage() {
         String firstId = queueService.enqueueReservationRequest(request(1L));
         String secondId = queueService.enqueueReservationRequest(request(2L));
-        when(reservationService.reserveNearestSlot(1L))
+        when(reservationService.reserveNearestSlot(eq(1L), anyString()))
             .thenThrow(new BusinessException("temporary failure"))
             .thenReturn(null);
 
@@ -88,7 +90,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     void exhaustedMessageShouldMoveToDlqWithoutDeletingNextMessage() {
         String failingId = queueService.enqueueReservationRequest(request(3L));
         String healthyId = queueService.enqueueReservationRequest(request(4L));
-        when(reservationService.reserveNearestSlot(3L))
+        when(reservationService.reserveNearestSlot(eq(3L), anyString()))
             .thenThrow(new BusinessException("temporary failure"));
 
         queueService.processReservationQueue();
@@ -108,7 +110,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     @Test
     void retryShouldKeepDedupAndReturnStatusToQueued() {
         String requestId = queueService.enqueueReservationRequest(request(5L));
-        when(reservationService.reserveNearestSlot(5L))
+        when(reservationService.reserveNearestSlot(eq(5L), anyString()))
                 .thenThrow(new BusinessException("temporary failure"));
 
         queueService.processReservationQueue();
@@ -124,7 +126,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     @Test
     void permanentFailureShouldClearDedupAndKeepFailedStatus() {
         String requestId = queueService.enqueueReservationRequest(request(6L));
-        when(reservationService.reserveNearestSlot(6L))
+        when(reservationService.reserveNearestSlot(eq(6L), anyString()))
                 .thenThrow(new DuplicateReservationException("already reserved"));
 
         queueService.processReservationQueue();
@@ -198,7 +200,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
 
         queueService.processReservationQueue();
 
-        verify(reservationService).reserveSlot(9L, 42L);
+        verify(reservationService).reserveSlot(9L, 42L, requestId);
         assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(), queueService.getRequestStatus(requestId, 9L));
         assertEquals(0, queueService.getProcessingLength());
         assertFalse(queueService.isUserAlreadyInQueue(9L));

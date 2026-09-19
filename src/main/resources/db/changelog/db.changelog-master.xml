@@ -14,5 +14,6 @@
     <include file="/db/changelog/changeset-006-user-role.xml"/>
     <include file="/db/changelog/changeset-007-time-semantics.xml"/>
     <include file="/db/changelog/changeset-008-demo-data.xml"/>
+    <include file="/db/changelog/changeset-009-reservation-request-id.xml"/>
 
 </databaseChangeLog>
