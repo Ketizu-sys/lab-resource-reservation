@@ -24,6 +24,7 @@ function logout() {
       </div>
       <div class="header-actions">
         <el-button text @click="$router.push('/resources')">资源</el-button>
+        <el-button text @click="$router.push('/auto-reservation')">自动预约</el-button>
         <el-button text @click="$router.push('/my-reservations')">我的预约</el-button>
         <el-button type="danger" plain @click="logout">退出登录</el-button>
       </div>

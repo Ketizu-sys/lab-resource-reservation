@@ -55,4 +55,22 @@ describe('HTTP 认证处理', () => {
     expect(notifyForbidden).toHaveBeenCalledOnce()
     expect(authStore.clearSession).not.toHaveBeenCalled()
   })
+
+  it('409 属于业务冲突，既不清理登录态也不提示无权限', () => {
+    const authStore = { clearSession: vi.fn() }
+    const redirectToLogin = vi.fn()
+    const notifyForbidden = vi.fn()
+
+    handleAccessError({
+      status: 409,
+      authStore,
+      currentPath: '/auto-reservation',
+      redirectToLogin,
+      notifyForbidden,
+    })
+
+    expect(authStore.clearSession).not.toHaveBeenCalled()
+    expect(redirectToLogin).not.toHaveBeenCalled()
+    expect(notifyForbidden).not.toHaveBeenCalled()
+  })
 })

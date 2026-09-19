@@ -5,6 +5,7 @@ import RegisterView from '../views/RegisterView.vue'
 import ResourcesView from '../views/ResourcesView.vue'
 import SlotsView from '../views/SlotsView.vue'
 import MyReservationsView from '../views/MyReservationsView.vue'
+import AutoReservationView from '../views/AutoReservationView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,7 @@ const router = createRouter({
     { path: '/resources', name: 'resources', component: ResourcesView, meta: { requiresAuth: true } },
     { path: '/slots', name: 'slots', component: SlotsView, meta: { requiresAuth: true } },
     { path: '/my-reservations', name: 'my-reservations', component: MyReservationsView, meta: { requiresAuth: true } },
+    { path: '/auto-reservation', name: 'auto-reservation', component: AutoReservationView, meta: { requiresAuth: true } },
     { path: '/:pathMatch(.*)*', redirect: '/resources' },
   ],
 })

@@ -15,6 +15,12 @@ import {
   cancelReservation,
   cancelReservationAndRefresh,
   getMyReservations,
+  getReservationRequestStatus,
+  isDuplicateQueueRequest,
+  isQueuedResponse,
+  isTerminalRequestStatus,
+  requestAutoReservation,
+  shouldContinuePolling,
 } from './reservation'
 
 describe('我的预约 API', () => {
@@ -57,5 +63,47 @@ describe('我的预约 API', () => {
     await cancelReservationAndRefresh(22, refresh)
     expect(http.delete).toHaveBeenCalledWith('/me/reservations/22')
     expect(refresh).toHaveBeenCalledOnce()
+  })
+})
+
+describe('自动预约 API', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('发起自动预约使用统一实例且不携带请求体', async () => {
+    http.post.mockResolvedValue({ status: 200, data: { requestId: 'direct-9', status: 'SUCCESS' } })
+    await requestAutoReservation()
+    expect(http.post).toHaveBeenCalledWith('/me/reservation-requests')
+  })
+
+  it('状态查询按 requestId 组装路径', async () => {
+    http.get.mockResolvedValue({ status: 200, data: { requestId: 'abc', status: 'QUEUED' } })
+    await getReservationRequestStatus('abc')
+    expect(http.get).toHaveBeenCalledWith('/me/reservation-requests/abc')
+  })
+
+  it('同步与异步只能依据 HTTP 状态码区分', () => {
+    expect(isQueuedResponse(202)).toBe(true)
+    expect(isQueuedResponse(200)).toBe(false)
+  })
+
+  it('只有 SUCCESS / FAILED 是终态', () => {
+    expect(isTerminalRequestStatus('SUCCESS')).toBe(true)
+    expect(isTerminalRequestStatus('FAILED')).toBe(true)
+    expect(isTerminalRequestStatus('QUEUED')).toBe(false)
+    expect(isTerminalRequestStatus('PROCESSING')).toBe(false)
+  })
+
+  it('QUEUED 与 PROCESSING 需要继续轮询', () => {
+    expect(shouldContinuePolling('QUEUED')).toBe(true)
+    expect(shouldContinuePolling('PROCESSING')).toBe(true)
+    expect(shouldContinuePolling('SUCCESS')).toBe(false)
+    expect(shouldContinuePolling('FAILED')).toBe(false)
+  })
+
+  it('409 识别为已有排队请求，401 不当作排队冲突', () => {
+    expect(isDuplicateQueueRequest({ response: { status: 409 } })).toBe(true)
+    expect(isDuplicateQueueRequest({ response: { status: 401 } })).toBe(false)
+    expect(isDuplicateQueueRequest({ response: { status: 500 } })).toBe(false)
+    expect(isDuplicateQueueRequest({})).toBe(false)
   })
 })
