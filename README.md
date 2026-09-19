@@ -389,5 +389,10 @@ Free To Use License (FTUL). See `LICENSE` for details.
 
 ## Author
 
-**Hooman Yarahmadi**  
+Original Author:
+**Hooman Yarahmadi** — original reservation baseline (V1)
 GitHub: [@HoomanDevp](https://github.com/HoomanDevp)
+
+Maintainer / V2 & V3 Refactor:
+**&lt;Your Name&gt;** — domain model redesign, admin console, async queue hardening, Vue 3 frontend
+GitHub: &lt;Your GitHub&gt;
