@@ -17,13 +17,16 @@
             WHERE email IN ('johndoe1@example.com', 'johndoe2@example.com', 'user125@example.com');
 
             INSERT INTO available_slot (start_time, end_time, is_reserved, created_by, created_date, version)
-            SELECT CURRENT_DATE + INTERVAL '1 day' + hour_number * INTERVAL '1 hour',
-                   CURRENT_DATE + INTERVAL '1 day' + (hour_number + 1) * INTERVAL '1 hour',
-                   FALSE,
-                   'SYSTEM',
-                   CURRENT_TIMESTAMP,
-                   0
-            FROM generate_series(9, 20) AS hour_number;
+            SELECT DATE_ADD(DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                                     INTERVAL 1 DAY), INTERVAL hours.hour_number HOUR),
+                   DATE_ADD(DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                                     INTERVAL 1 DAY), INTERVAL (hours.hour_number + 1) HOUR),
+                   FALSE, 'SYSTEM', UTC_TIMESTAMP(6), 0
+            FROM (
+                SELECT 9 AS hour_number UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL
+                SELECT 12 UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15 UNION ALL
+                SELECT 16 UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19 UNION ALL SELECT 20
+            ) AS hours;
         ]]>
         </sql>
     </changeSet>

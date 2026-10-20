@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.Lock;
 import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long>, JpaSpecificationExecutor<Reservation> {
@@ -68,7 +69,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long>,
      * 查询时段已经结束的预约，供 ReservationExpiryService 批量清理。
      * JOIN FETCH 会在同一次查询中加载关联时段，避免清理循环内逐条查询。
      *
-     * @param now 本次清理任务的当前时间
+     * @param now 本次清理任务的上海本地当前时间
      * @return 结束时间早于当前时间的预约
      */
     /**
@@ -79,9 +80,21 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long>,
             SELECT r.*
             FROM reservation r
             JOIN available_slot s ON s.id = r.available_slot_id
-            WHERE r.status = 'ACTIVE' AND s.end_time < :now
+            WHERE r.status = 'ACTIVE' AND s.end_time < CAST(:now AS DATETIME(6))
             ORDER BY r.id
             FOR UPDATE OF r SKIP LOCKED
             """, nativeQuery = true)
-    List<Reservation> findExpiredReservationsForUpdate(@Param("now") LocalDateTime now);
+    List<Reservation> findExpiredReservationsForUpdateValue(@Param("now") String now);
+
+    /**
+     * 原生 SQL 的 DATETIME 参数按字符串传递，避免 Connector/J 把无时区的 LocalDateTime
+     * 当作 instant 在 UTC 连接上转换，从而产生八小时偏移。
+     */
+    default List<Reservation> findExpiredReservationsForUpdate(LocalDateTime now) {
+        return findExpiredReservationsForUpdateValue(formatMysqlDateTime(now));
+    }
+
+    private static String formatMysqlDateTime(LocalDateTime value) {
+        return value.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"));
+    }
 }

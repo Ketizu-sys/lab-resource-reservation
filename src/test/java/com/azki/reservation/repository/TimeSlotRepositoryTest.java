@@ -12,7 +12,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -122,7 +122,9 @@ class TimeSlotRepositoryTest extends ContainerIntegrationTestSupport {
         invalid.setReserved(false);
         invalid.setResource(resource);
 
-        assertThrows(DataIntegrityViolationException.class, () -> {
+        // MySQL 将 CHECK 失败报告为 HY000，Hibernate 可能包装为 JpaSystemException；
+        // 这里验证数据库确实拒绝写入，而不绑定某一驱动的异常子类型。
+        assertThrows(DataAccessException.class, () -> {
             timeSlotRepository.saveAndFlush(invalid);
         });
     }

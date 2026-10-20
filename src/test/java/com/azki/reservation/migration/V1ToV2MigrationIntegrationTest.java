@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -14,13 +14,13 @@ import javax.sql.DataSource;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/** 使用真实 PostgreSQL 验证带 V1 历史数据的数据库可安全升级至 V2。 */
+/** 使用真实 MySQL 验证带 V1 历史数据的数据库可安全升级至 V2。 */
 @Testcontainers(disabledWithoutDocker = true)
 class V1ToV2MigrationIntegrationTest {
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:15-alpine")
+    private static final MySQLContainer<?> MYSQL =
+            new MySQLContainer<>("mysql:8.4")
                     .withDatabaseName("migration_test")
                     .withUsername("migration_test")
                     .withPassword("migration_test");
@@ -36,17 +36,25 @@ class V1ToV2MigrationIntegrationTest {
         migrate(dataSource, "classpath:db/changelog/db.changelog-master.xml");
 
         assertEquals(6, jdbc.queryForObject(
-                "SELECT COUNT(*) FROM z_liq_changelog WHERE id IN " +
+                "SELECT COUNT(*) FROM Z_LIQ_CHANGELOG WHERE id IN " +
                         "('4-introduce-resource-domain', '5-reservation-lifecycle', " +
                         "'6-add-user-role', '7-unify-time-semantics', " +
                         "'8-add-demo-resources-and-slots', '8-remove-resource-version-labels')",
                 Integer.class));
-        assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "reserved_at"));
-        assertEquals("timestamp with time zone", columnType(jdbc, "reservation", "created_date"));
-        assertEquals("timestamp with time zone", columnType(jdbc, "users", "created_date"));
-        assertEquals("timestamp without time zone", columnType(jdbc, "available_slot", "start_time"));
-        assertEquals("timestamp without time zone", columnType(jdbc, "available_slot", "end_time"));
-        assertEquals("Asia/Shanghai", jdbc.queryForObject("SHOW TimeZone", String.class));
+        assertEquals("datetime", columnType(jdbc, "reservation", "reserved_at"));
+        assertEquals("datetime", columnType(jdbc, "reservation", "created_date"));
+        assertEquals("datetime", columnType(jdbc, "users", "created_date"));
+        assertEquals("datetime", columnType(jdbc, "available_slot", "start_time"));
+        assertEquals("datetime", columnType(jdbc, "available_slot", "end_time"));
+        assertEquals("bit", columnType(jdbc, "available_slot", "is_reserved"));
+        assertEquals(4, jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE()
+                  AND table_name IN ('users', 'resource', 'available_slot', 'reservation')
+                  AND engine = 'InnoDB'
+                """, Integer.class));
+        assertEquals("+00:00", jdbc.queryForObject("SELECT @@session.time_zone", String.class));
         assertEquals(1, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM resource WHERE name = '默认实验室资源'", Integer.class));
         assertEquals(11, jdbc.queryForObject("SELECT COUNT(*) FROM resource", Integer.class));
@@ -87,9 +95,9 @@ class V1ToV2MigrationIntegrationTest {
                 SELECT u.id, s.id, CURRENT_TIMESTAMP, 'CANCELLED', CURRENT_TIMESTAMP, 'migration-test',
                        'SYSTEM', CURRENT_TIMESTAMP, 0
                 FROM users u
-                CROSS JOIN LATERAL (
-                    SELECT id FROM available_slot WHERE start_time > CURRENT_TIMESTAMP ORDER BY start_time LIMIT 1
-                ) s
+                CROSS JOIN (SELECT id FROM available_slot
+                            WHERE start_time > CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')
+                            ORDER BY start_time LIMIT 1) s
                 WHERE u.email = 'user125@example.com'
                 """);
 
@@ -99,46 +107,47 @@ class V1ToV2MigrationIntegrationTest {
                     (user_id, available_slot_id, reserved_at, status, created_by, created_date, version)
                 SELECT u.id, s.id, CURRENT_TIMESTAMP, 'ACTIVE', 'SYSTEM', CURRENT_TIMESTAMP, 0
                 FROM users u
-                CROSS JOIN LATERAL (
-                    SELECT available_slot_id AS id FROM reservation WHERE status = 'ACTIVE' LIMIT 1
-                ) s
+                CROSS JOIN (SELECT available_slot_id AS id FROM reservation WHERE status = 'ACTIVE' LIMIT 1) s
                 WHERE u.email = 'user125@example.com'
                 """));
     }
 
     private void insertRepresentativeV1Reservations(JdbcTemplate jdbc) {
-        jdbc.update("""
-                UPDATE available_slot
-                SET is_reserved = true
-                WHERE id IN (
-                    (SELECT id FROM available_slot WHERE end_time < CURRENT_TIMESTAMP ORDER BY end_time LIMIT 1),
-                    (SELECT id FROM available_slot WHERE start_time > CURRENT_TIMESTAMP ORDER BY start_time LIMIT 1)
-                )
-                """);
+        Long pastSlotId = jdbc.queryForObject(
+                "SELECT id FROM available_slot WHERE end_time < " +
+                        "CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00') ORDER BY end_time LIMIT 1",
+                Long.class);
+        Long futureSlotId = jdbc.queryForObject(
+                "SELECT id FROM available_slot WHERE start_time > " +
+                        "CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00') ORDER BY start_time LIMIT 1",
+                Long.class);
+        jdbc.update("UPDATE available_slot SET is_reserved = true WHERE id IN (?, ?)",
+                pastSlotId, futureSlotId);
         jdbc.update("""
                 INSERT INTO reservation
                     (user_id, available_slot_id, reserved_at, created_by, created_date, version)
-                SELECT u.id,
-                       (SELECT id FROM available_slot WHERE end_time < CURRENT_TIMESTAMP ORDER BY end_time LIMIT 1),
+                SELECT u.id, ?,
                        CURRENT_TIMESTAMP, 'SYSTEM', CURRENT_TIMESTAMP, 0
                 FROM users u WHERE u.email = 'johndoe1@example.com'
-                """);
+                """, pastSlotId);
         jdbc.update("""
                 INSERT INTO reservation
                     (user_id, available_slot_id, reserved_at, created_by, created_date, version)
-                SELECT u.id,
-                       (SELECT id FROM available_slot WHERE start_time > CURRENT_TIMESTAMP ORDER BY start_time LIMIT 1),
+                SELECT u.id, ?,
                        CURRENT_TIMESTAMP, 'SYSTEM', CURRENT_TIMESTAMP, 0
                 FROM users u WHERE u.email = 'johndoe2@example.com'
-                """);
+                """, futureSlotId);
     }
 
     private DataSource dataSource() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName(POSTGRES.getDriverClassName());
-        dataSource.setUrl(POSTGRES.getJdbcUrl());
-        dataSource.setUsername(POSTGRES.getUsername());
-        dataSource.setPassword(POSTGRES.getPassword());
+        dataSource.setDriverClassName(MYSQL.getDriverClassName());
+        String jdbcUrl = MYSQL.getJdbcUrl();
+        String separator = jdbcUrl.contains("?") ? "&" : "?";
+        dataSource.setUrl(jdbcUrl + separator
+                + "connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true");
+        dataSource.setUsername(MYSQL.getUsername());
+        dataSource.setPassword(MYSQL.getPassword());
         return dataSource;
     }
 
@@ -146,7 +155,7 @@ class V1ToV2MigrationIntegrationTest {
         return jdbc.queryForObject("""
                 SELECT data_type
                 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
                 """, String.class, table, column);
     }
 

@@ -68,7 +68,7 @@ class ResourceQueryServiceIntegrationTest extends ContainerIntegrationTestSuppor
     }
 
     @Test
-    void optionalFiltersShouldWorkForEveryNullAndBlankCombinationOnPostgres() {
+    void optionalFiltersShouldWorkForEveryNullAndBlankCombinationOnMysql() {
         Resource gpu = save("filter-gpu", ResourceType.GPU, ResourceStatus.ACTIVE);
         Resource lab = save("filter-lab", ResourceType.LAB, ResourceStatus.ACTIVE);
         String locationFragment = marker.toUpperCase();

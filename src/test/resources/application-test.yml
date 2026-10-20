@@ -3,14 +3,18 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    database-platform: org.hibernate.dialect.MySQLDialect
     show-sql: false
     properties:
       hibernate:
         format_sql: true
+        # LocalDateTime 必须原样写入 DATETIME；UTC 只用于 Instant 与数据库会话。
+        type:
+          java_time_use_direct_jdbc: true
   datasource:
     hikari:
-      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      connection-init-sql: SET time_zone = '+00:00'
   # 表结构只由 Liquibase 创建；test context 不加载开发演示数据。
   liquibase:
     enabled: true
@@ -28,6 +32,8 @@ logging:
 
 reservation:
   time-zone: Asia/Shanghai
+  queue:
+    backend: redis
   # 集成测试直接控制队列消费时机，禁止后台定时线程抢先处理测试消息。
   scheduling:
     enabled: false
