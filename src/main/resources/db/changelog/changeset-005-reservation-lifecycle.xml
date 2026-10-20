@@ -9,27 +9,37 @@
     <changeSet id="5-reservation-lifecycle" author="Hu">
         <addColumn tableName="reservation">
             <column name="status" type="VARCHAR(32)" defaultValue="ACTIVE"/>
-            <column name="cancelled_at" type="TIMESTAMP"/>
-            <column name="completed_at" type="TIMESTAMP"/>
+            <column name="cancelled_at" type="DATETIME(6)"/>
+            <column name="completed_at" type="DATETIME(6)"/>
             <column name="cancel_reason" type="VARCHAR(500)"/>
         </addColumn>
 
         <!-- 迁移时已经结束的旧预约直接归档为完成，其余旧记录保持有效。 -->
         <sql>
             UPDATE reservation r
-            SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-            FROM available_slot s
-            WHERE r.available_slot_id = s.id
-              AND s.end_time &lt; CURRENT_TIMESTAMP;
+            JOIN available_slot s ON r.available_slot_id = s.id
+            SET r.status = 'COMPLETED', r.completed_at = UTC_TIMESTAMP(6)
+            WHERE s.end_time &lt; CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00');
         </sql>
 
         <addNotNullConstraint tableName="reservation" columnName="status" columnDataType="VARCHAR(32)"/>
 
+        <!--
+          InnoDB 要求外键列始终有可用索引；旧唯一索引可能被选作外键支撑索引，
+          因此必须先建立生命周期查询/历史关联所需的普通索引，再移除唯一性。
+        -->
+        <createIndex tableName="reservation" indexName="idx_reservation_user_status">
+            <column name="user_id"/>
+            <column name="status"/>
+        </createIndex>
+        <createIndex tableName="reservation" indexName="idx_reservation_slot_history">
+            <column name="available_slot_id"/>
+        </createIndex>
+
         <!-- 生命周期引入后，用户可拥有多个互不重叠的预约，时段也可保留多条历史记录。 -->
         <dropUniqueConstraint tableName="reservation" constraintName="uk_reservation_active_user"/>
 
-        <!-- 初始变更集未显式命名该约束，PostgreSQL 按列生成如下名称。 -->
-        <sql>ALTER TABLE reservation DROP CONSTRAINT IF EXISTS reservation_available_slot_id_key;</sql>
+        <dropUniqueConstraint tableName="reservation" constraintName="uk_reservation_slot_initial"/>
 
         <sql>
             ALTER TABLE reservation
@@ -37,16 +47,27 @@
             CHECK (status IN ('ACTIVE', 'CANCELLED', 'COMPLETED'));
         </sql>
 
-        <!-- 同一时段允许存在历史记录，但任何时刻最多只能有一条有效预约。 -->
+        <!--
+          MySQL 不支持 PostgreSQL 的部分唯一索引。生成列仅在 ACTIVE 时投影 slot id，
+          其他状态为 NULL；MySQL 唯一索引允许多个 NULL，因此完整保留原约束语义。
+        -->
         <sql>
-            CREATE UNIQUE INDEX uk_reservation_active_slot
-            ON reservation (available_slot_id)
-            WHERE status = 'ACTIVE';
+            ALTER TABLE reservation
+            ADD COLUMN active_slot_id BIGINT
+                GENERATED ALWAYS AS (
+                    CASE WHEN status = 'ACTIVE' THEN available_slot_id ELSE NULL END
+                ) STORED,
+            ADD CONSTRAINT uk_reservation_active_slot UNIQUE (active_slot_id);
         </sql>
 
-        <createIndex tableName="reservation" indexName="idx_reservation_user_status">
-            <column name="user_id"/>
+        <createIndex tableName="reservation" indexName="idx_reservation_status_id_slot">
             <column name="status"/>
+            <column name="id"/>
+            <column name="available_slot_id"/>
+        </createIndex>
+        <createIndex tableName="available_slot" indexName="idx_available_slot_end_id">
+            <column name="end_time"/>
+            <column name="id"/>
         </createIndex>
     </changeSet>
 

@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 验证时段删除只针对“没有任何预约历史”的时段。
  *
  * <p>取消和完成都会保留 reservation 行，并把 available_slot.is_reserved 置回 false，
- * 因此只有预约历史才是外键安全的判断依据。真实 PostgreSQL 会在删除被引用的时段时
+ * 因此只有预约历史才是外键安全的判断依据。真实 MySQL 会在删除被引用的时段时
  * 抛出外键约束异常，这些用例确保该异常不会再以 HTTP 500 的形式暴露给客户端。</p>
  */
 @SpringBootTest(properties = "management.server.port=8080")
@@ -159,7 +159,7 @@ class AdminSlotDeletionIntegrationTest extends ContainerIntegrationTestSupport {
         String lower = body.toLowerCase();
         List<String> forbidden = List.of(
                 "sql", "constraint", "fk_reservation_slot", "hibernate", "jdbc",
-                "delete from available_slot", "org.postgresql", "psqlexception", "stacktrace");
+                "delete from available_slot", "com.mysql", "mysqlexception", "stacktrace");
         forbidden.forEach(token -> assertFalse(lower.contains(token),
                 "响应体不应包含内部实现信息 '" + token + "'，实际响应：" + body));
     }

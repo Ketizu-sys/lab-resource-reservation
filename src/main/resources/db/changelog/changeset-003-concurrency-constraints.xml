@@ -12,12 +12,12 @@
                 columnNames="user_id"
                 constraintName="uk_reservation_active_user"/>
 
-        <!-- PostgreSQL 部分索引只覆盖空闲时段，服务于最近空闲时段查询。 -->
-        <sql>
-            CREATE INDEX idx_available_slot_unreserved_start
-            ON available_slot (start_time)
-            WHERE is_reserved = false;
-        </sql>
+        <!-- MySQL 不支持部分索引；把等值过滤列放在范围列之前，供最近空闲时段查询使用。 -->
+        <createIndex tableName="available_slot" indexName="idx_available_slot_unreserved_start">
+            <column name="is_reserved"/>
+            <column name="start_time"/>
+            <column name="id"/>
+        </createIndex>
 
         <sql>
             ALTER TABLE available_slot

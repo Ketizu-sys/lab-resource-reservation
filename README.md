@@ -1,8 +1,8 @@
 # 实验室资源预约与调度平台
 
-一个围绕「高并发预约一致性」设计的实验室资源预约系统：Java 21 + Spring Boot 3.5 后端负责事务与并发控制，PostgreSQL 作为最终事实源，Redis 承担高负载下的异步缓冲与状态追踪，Vue 3 前端提供用户端与管理员端两套界面。
+一个围绕「高并发预约一致性」设计的实验室资源预约系统：Java 21 + Spring Boot 3.5 后端负责事务与并发控制，MySQL 8.4 LTS（InnoDB）作为最终事实源；异步传输可在 Redis List 与 Kafka 间切换，Redis 继续承担状态、去重与缓存，Vue 3 前端提供用户端与管理员端两套界面。
 
-核心问题只有一个：**同一个时段，如何保证不会被两个人同时占掉**。系统围绕这一点叠加了行锁、乐观锁、重叠检测、数据库唯一约束与重试机制，并在高负载时把请求切换到 Redis 异步队列削峰。
+核心问题只有一个：**同一个时段，如何保证不会被两个人同时占掉**。系统围绕这一点叠加了行锁、乐观锁、重叠检测、数据库唯一约束与重试机制，并在高负载时把请求切换到可配置的异步队列削峰。
 
 ---
 
@@ -12,7 +12,7 @@
 |---|---|
 | 业务 | 实验室 / 会议室 / GPU / 设备的资源预约与时段调度 |
 | 后端重心 | 高并发下的预约一致性、异步削峰、生命周期管理 |
-| 存储分工 | PostgreSQL 存最终事实，Redis 存过程状态 |
+| 存储分工 | MySQL 存最终事实，Redis 存过程状态，Kafka 可选承担消息传输 |
 | 前端 | 用户端闭环 + 管理员端三页管理 + 异步队列状态可视化 |
 | 当前状态 | 核心预约、异步调度、用户端与管理员端功能均已实现 |
 
@@ -26,13 +26,14 @@
 - Spring Boot 3.5
 - Spring Security + JWT（无状态认证与 RBAC）
 - Spring Data JPA / Hibernate
-- PostgreSQL 16
-- Redis 7（队列、状态、缓存）
+- MySQL 8.4 LTS（InnoDB）
+- Redis 7（状态、去重、缓存、Redis 队列模式）
+- Apache Kafka 3.8（可选消息传输、重试 Topic、DLT）
 - Liquibase（数据库演进）
 - Spring Retry（乐观锁冲突重试）
 - Bucket4j（API 限流）
 - Micrometer + Prometheus + Spring Boot Actuator
-- Testcontainers（真实 PostgreSQL / Redis 集成测试）
+- Testcontainers（真实 MySQL 8.4 / Redis / Kafka 集成测试）
 - Maven
 
 **前端**
@@ -82,8 +83,11 @@ flowchart LR
     CTRL --> SVC[ReservationService]
     CTRL --> Q[ReservationQueueService]
 
-    SVC --> DB[(PostgreSQL<br/>最终事实源)]
-    Q --> REDIS[(Redis<br/>队列 / 状态 / DLQ)]
+    SVC --> DB[(MySQL 8.4 / InnoDB<br/>最终事实源)]
+    Q --> REDIS[(Redis<br/>状态 / 去重 / Outbox)]
+    Q --> MQ{队列后端}
+    MQ --> RQ[(Redis List / ZSet / DLQ)]
+    MQ --> KAFKA[(Kafka<br/>main / retry / DLT)]
 
     Q -->|定时消费| SVC
     SVC -->|持久化| DB
@@ -91,8 +95,9 @@ flowchart LR
 
 **分工原则**
 
-- **PostgreSQL 是唯一事实源**：预约的存在与否、状态、时段占用，一律以数据库为准
-- **Redis 只是过程缓冲**：队列、请求状态、处理中集合、死信队列，全部带 TTL，可丢失、可重建
+- **MySQL 是唯一事实源**：预约的存在与否、状态、时段占用，一律以数据库为准
+- **Redis 保存过程状态**：状态查询、用户排队去重和 Kafka Outbox 不改变 REST API 契约
+- **传输后端可切换**：默认 `redis` 保持原行为；`kafka` 使用 main / retry / DLT Topic
 - **低负载走同步，高负载走队列**：`LoadMonitoringService` 监控当前实例活跃请求数，超过阈值 `reservation.request.threshold`（默认 5）即切换到异步路径
 
 ### 预约写链路
@@ -102,10 +107,10 @@ POST /api/v1/me/reservation-requests
    |
    +-- 低负载 --> 同步写库 -------------> HTTP 200 {requestId: "direct-<id>", status: SUCCESS}
    |
-   +-- 高负载 --> 写入 Redis 队列 ------> HTTP 202 {requestId: <uuid>, status: QUEUED}
+   +-- 高负载 --> 写入队列 ------------> HTTP 202 {requestId: <uuid>, status: QUEUED}
                         |
                         v
-                 定时轮询消费者（10ms 一批 50 条）
+                 Redis 定时消费者 / Kafka 消费者组
                         |
                         v
                  QUEUED -> PROCESSING -> SUCCESS / FAILED
@@ -129,7 +134,7 @@ POST /api/v1/me/reservation-requests
 
 任何单层失效，其余层仍可保证不会出现「一个时段被两条预约占用」。
 
-### 2. Redis 异步队列
+### 2. Redis / Kafka 异步队列
 
 - **状态机**：`QUEUED → PROCESSING → SUCCESS / FAILED`
 - **三段结构**：等待 List、处理中 Sorted Set、死信 List（DLQ）
@@ -138,11 +143,16 @@ POST /api/v1/me/reservation-requests
 - **语义**：at-least-once —— 重复请求由业务层的重叠检测拦截，终态记为 FAILED 而非进入 DLQ
 - **TTL**：请求状态 24 小时过期，过期后查询返回 404
 
+Kafka 模式通过 `RESERVATION_QUEUE_BACKEND=kafka` 开启。请求先以 Lua 原子写入 Redis
+状态、用户去重集合和 Outbox，发布器成功写入 Kafka 后再确认 Outbox；消费者按 `userId`
+作为消息键，使用独立重试 Topic（默认 10 秒、60 秒）和 DLT。发布或消费均可能重复，
+因此语义仍是 at-least-once，最终由 MySQL `request_id` 唯一约束保证业务效果幂等。
+
 #### 数据库侧幂等（requestId）
 
 消息可能被重复投递，因此单靠 Redis 状态不足以保证业务只发生一次：
 
-- **PostgreSQL 是最终事实源**，Redis 只是过程状态与缓存层
+- **MySQL 是最终事实源**，Redis 只是过程状态与缓存层
 - 异步预约写入 `reservation.request_id`，并由 Liquibase changeset
   `9-reservation-request-id` 建立 `UNIQUE(request_id)` 约束 —— 该约束允许多条
   `NULL`，因此手工预约与同步直接预约不受影响
@@ -156,16 +166,11 @@ POST /api/v1/me/reservation-requests
 合起来可以准确描述为：**at-least-once delivery + database idempotency +
 effectively-once business effect**。不应表述为 exactly-once message delivery。
 
-#### 为什么当前选择 Redis 而不是 RabbitMQ / Kafka
+#### 两种后端的取舍
 
-这是当前场景下的工程权衡，不代表 Redis 优于消息队列：
-
-- 系统已经依赖 Redis（缓存、限流、会话无关状态），引入新中间件会增加运维面
-- 当前是单体应用、单一预约消费者、消费链路短
-- 不需要长期事件保留、多消费者组或事件流 replay
-
-演进方向：需要任务队列语义、复杂 ack / routing / 延迟队列时选 **RabbitMQ**；
-需要高吞吐事件流、多消费者组、长期保留与 replay 时选 **Kafka**。
+- `redis`：依赖少、延迟低，适合单体和较小部署，保留原 List + ZSet + Lua 行为
+- `kafka`：适合多实例消费者、高吞吐、消息保留与 replay，但增加 Broker 运维成本
+- 切换只影响异步传输；Controller、Service、REST API、MySQL 并发控制均保持不变
 
 ### 3. 预约生命周期
 
@@ -188,16 +193,22 @@ ACTIVE ──> CANCELLED   （用户主动取消 / 管理员强制取消）
 
 `src/main/resources/db/changelog/` 下按 `changeset-00N-*.xml` 顺序演进，Hibernate 设为 `ddl-auto: validate` 只校验不建表，保证 schema 与迁移脚本始终一致。
 
+MySQL 不支持 PostgreSQL 的部分索引。`ACTIVE` 预约唯一性通过生成列
+`active_slot_id = CASE WHEN status = 'ACTIVE' THEN available_slot_id END` 与唯一索引实现；
+空闲时段查询使用 `(is_reserved, start_time, id)` 复合索引。所有表由 MySQL 默认
+InnoDB 引擎创建。应用连接显式使用 `READ_COMMITTED`，减少范围扫描的间隙锁竞争，
+悲观锁、`FOR UPDATE ... SKIP LOCKED`、乐观锁和 Spring Retry 语义保持不变。
+
 ### 6. 时间模型
 
-- **生命周期与审计字段**（`reservedAt` / `cancelledAt` / `completedAt`）：`Instant` + `timestamptz`，带时区存储
-- **业务时段**（`AvailableSlot.startTime` / `endTime`）：本地业务时间，不带时区，按实验室所在时区解释
+- **生命周期与审计字段**（`reservedAt` / `cancelledAt` / `completedAt`）：Java `Instant` + MySQL `DATETIME(6)`，通过 UTC JDBC 连接与数据库会话按 UTC 读写
+- **业务时段**（`AvailableSlot.startTime` / `endTime`）：Java `LocalDateTime` + MySQL `DATETIME(6)`，保存 Asia/Shanghai 本地墙上时间
 
 这样的分工避免了「预约时段显示差 8 小时」的经典问题，同时保留了审计时间的绝对性。
 
 ### 7. 测试
 
-- **后端**：Testcontainers 起真实 PostgreSQL / Redis，覆盖 migration、security、concurrency、queue
+- **后端**：Testcontainers 起真实 MySQL 8.4 / Redis，覆盖 migration、security、concurrency、queue
 - **并发测试**：CountDownLatch + 线程池验证真实竞态
 - **前端 Vitest**：API 层参数构造、轮询 composable、路由守卫权限判断
 
@@ -254,7 +265,25 @@ docker compose up -d --build
 - 后端 API：http://localhost:8080
 - 健康检查：http://localhost:8081/actuator/health （Actuator 走独立端口 8081）
 
-启动前需准备 `.env`（可复制 `.env.example`），至少配置 `DB_PASSWORD` 与 `JWT_SECRET`（JWT 密钥需 ≥ 32 字节）。
+启动前需准备 `.env`（可复制 `.env.example`），至少配置 `MYSQL_PASSWORD`、
+`MYSQL_ROOT_PASSWORD` 与 `JWT_SECRET`（JWT 密钥需 ≥ 32 字节）。Compose 会在首次启动时
+创建 `reservationdb` 和普通应用账号；Liquibase 随应用启动从零创建 Schema。
+如宿主机端口冲突，可在 `.env` 覆盖 `MYSQL_HOST_PORT`、`REDIS_HOST_PORT`、`KAFKA_HOST_PORT`、
+`APP_HTTP_PORT` 和 `APP_MANAGEMENT_PORT`；容器间连接仍使用固定的内部端口。
+
+`.env` 中设置 `RESERVATION_QUEUE_BACKEND=kafka` 可启用 Kafka；保持 `redis` 则运行原队列。
+
+如果只用 Docker 启动基础设施、在宿主机运行后端：
+
+```bash
+docker compose up -d mysql redis kafka
+set DB_USERNAME=azki
+set DB_PASSWORD=<MYSQL_PASSWORD>
+set RESERVATION_QUEUE_BACKEND=kafka
+mvnw.cmd spring-boot:run
+```
+
+PowerShell 请使用 `$env:DB_USERNAME='azki'` / `$env:DB_PASSWORD='...'`。
 
 **2. 启动前端**
 
@@ -304,16 +333,16 @@ npm test
 npm run build
 ```
 
-后端集成测试依赖 Docker（Testcontainers 会临时起 PostgreSQL / Redis 容器，使用随机端口，不会与本地 5432 / 6379 冲突）。
+后端集成测试依赖 Docker（Testcontainers 会临时起 MySQL 8.4 / Redis / Kafka 容器，使用随机端口，不会与本地端口冲突）。
 
 ---
 
 ## 十一、系统能力
 
 - 用户端闭环：注册 → 登录 → 浏览资源 → 查询时段 → 预约 → 查看 → 取消
-- 自动预约：支持同步（200）与异步（202 + Redis 队列）双路径
+- 自动预约：支持同步（200）与异步（202 + Redis/Kafka 队列）双路径
 - 管理员端：资源 / 时段 / 预约三类管理能力
-- 自动化测试覆盖认证鉴权、数据库迁移、并发一致性、Redis 队列与前端核心逻辑
+- 自动化测试覆盖认证鉴权、数据库迁移、并发一致性、Redis/Kafka 队列与前端核心逻辑
 
 ---
 
@@ -326,8 +355,13 @@ reservation:
   scheduling:
     enabled: true
   queue:
+    backend: redis # 改为 kafka 启用 Kafka 传输
     batch-size: 50
     poll-interval-ms: 10
+    kafka:
+      topic: reservation.requests.v1
+      consumer-group: reservation-workers-v1
+      partitions: 3
   status:
     expiry-hours: 24
   rate-limiting:

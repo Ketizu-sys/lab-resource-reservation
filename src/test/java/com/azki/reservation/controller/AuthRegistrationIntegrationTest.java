@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 使用真实 PostgreSQL 验证注册、唯一约束、密码加密以及注册后的登录流程。 */
+/** 使用真实 MySQL 验证注册、唯一约束、密码加密以及注册后的登录流程。 */
 @SpringBootTest(properties = "management.server.port=8080")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -183,7 +183,7 @@ class AuthRegistrationIntegrationTest extends ContainerIntegrationTestSupport {
     }
 
     @Test
-    void postgresShouldEnforceEmailAndUsernameUniqueConstraints() {
+    void mysqlShouldEnforceEmailAndUsernameUniqueConstraints() {
         String suffix = suffix();
         String email = "db-unique-" + suffix + "@example.com";
         String username = "db_unique_" + suffix;

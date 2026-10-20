@@ -12,19 +12,23 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 基于 Redis 的异步预约队列服务。
+ * 异步预约入口与状态服务，可在 Redis List 和 Kafka 两种传输后端之间切换。
  *
  * <p>等待消息保存在 List 中；消息被消费者领取后会原子移动到带时间戳的处理中 Sorted Set。
  * 只有业务处理结束后才会确认删除；处理超时的消息会重新进入等待队列，因此进程异常退出时
@@ -41,7 +45,58 @@ public class ReservationQueueService {
     static final String USER_SET_KEY = "reservation:users:queued";
     static final String STATUS_KEY_PREFIX = "reservation:status:";
     static final String STATUS_OWNER_KEY_PREFIX = "reservation:status-owner:";
+    static final String KAFKA_OUTBOX_KEY = "reservation:kafka:outbox";
+    static final String KAFKA_OUTBOX_PAYLOAD_KEY = "reservation:kafka:outbox:payload";
+    static final String KAFKA_DLT_COUNT_KEY = "reservation:kafka:dlt:count";
     private static final int MAX_ATTEMPTS = 3;
+
+    /** Kafka 模式的入口写入 Redis Outbox，避免 Redis 状态与 Kafka 发送之间出现双写空窗。 */
+    private static final RedisScript<Long> KAFKA_ENQUEUE_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('SADD', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('SET', KEYS[2], ARGV[3])
+        redis.call('EXPIRE', KEYS[2], ARGV[4])
+        redis.call('SET', KEYS[3], ARGV[1])
+        redis.call('EXPIRE', KEYS[3], ARGV[4])
+        redis.call('HSET', KEYS[4], ARGV[5], ARGV[2])
+        redis.call('ZADD', KEYS[5], ARGV[6], ARGV[5])
+        return 1
+        """, Long.class);
+
+    /** 原子领取到期的 Outbox 消息，并用未来时间作为发布租约，支持多实例发布。 */
+    @SuppressWarnings("rawtypes")
+    private static final RedisScript<List> KAFKA_OUTBOX_CLAIM_SCRIPT = new DefaultRedisScript<>("""
+        local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
+        local claimed = {}
+        for _, requestId in ipairs(ids) do
+            redis.call('ZADD', KEYS[1], ARGV[3], requestId)
+            local payload = redis.call('HGET', KEYS[2], requestId)
+            table.insert(claimed, requestId)
+            table.insert(claimed, payload or '')
+        end
+        return claimed
+        """, List.class);
+
+    /** 只确认仍与本次发送内容一致的 Outbox 消息，避免误删后续覆盖的数据。 */
+    private static final RedisScript<Long> KAFKA_OUTBOX_ACK_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('HGET', KEYS[2], ARGV[1]) ~= ARGV[2] then
+            return 0
+        end
+        redis.call('HDEL', KEYS[2], ARGV[1])
+        redis.call('ZREM', KEYS[1], ARGV[1])
+        return 1
+        """, Long.class);
+
+    /** Kafka 消费终态只更新状态并释放用户排队占位。 */
+    private static final RedisScript<Long> KAFKA_COMPLETE_SCRIPT = new DefaultRedisScript<>("""
+        redis.call('SET', KEYS[1], ARGV[1])
+        redis.call('EXPIRE', KEYS[1], ARGV[3])
+        redis.call('SREM', KEYS[2], ARGV[2])
+        redis.call('SET', KEYS[3], ARGV[2])
+        redis.call('EXPIRE', KEYS[3], ARGV[3])
+        return 1
+        """, Long.class);
 
     /** 原子完成用户占位、消息入队、初始状态和状态所有者写入。 */
     private static final RedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>("""
@@ -173,6 +228,13 @@ public class ReservationQueueService {
     private final ReservationService reservationService;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final QueueBackend queueBackend;
+    private final String kafkaTopic;
+    private final int kafkaPublishBatchSize;
+    private final long kafkaPublishTimeoutMs;
+    private final long kafkaPublishRetryDelayMs;
+    private final long kafkaPublishClaimTimeoutMs;
 
     @Value("${reservation.queue.batch-size:10}")
     private int batchSize = 10;
@@ -189,8 +251,20 @@ public class ReservationQueueService {
         QUEUED, PROCESSING, SUCCESS, FAILED
     }
 
+    enum QueueBackend {
+        REDIS, KAFKA;
+
+        static QueueBackend from(String value) {
+            try {
+                return QueueBackend.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Unsupported reservation.queue.backend: " + value, e);
+            }
+        }
+    }
+
     /** 可被 Jackson 稳定反序列化的队列消息。 */
-    static class QueueItem {
+    public static class QueueItem {
         public ReservationRequestDto request;
         public int attempts;
         public String requestId;
@@ -198,7 +272,7 @@ public class ReservationQueueService {
         public QueueItem() {
         }
 
-        QueueItem(ReservationRequestDto request, int attempts, String requestId) {
+        public QueueItem(ReservationRequestDto request, int attempts, String requestId) {
             this.request = request;
             this.attempts = attempts;
             this.requestId = requestId;
@@ -209,16 +283,65 @@ public class ReservationQueueService {
     private record ClaimedQueueItem(QueueItem item, String rawJson) {
     }
 
+    @Autowired
+    public ReservationQueueService(
+        RedisTemplate<String, Object> redisTemplate,
+        ReservationService reservationService,
+        ObjectMapper objectMapper,
+        MeterRegistry meterRegistry,
+        ObjectProvider<KafkaTemplate<String, String>> kafkaTemplateProvider,
+        @Value("${reservation.queue.backend:redis}") String queueBackend,
+        @Value("${reservation.queue.kafka.topic:reservation.requests.v1}") String kafkaTopic,
+        @Value("${reservation.queue.kafka.publisher-batch-size:50}") int kafkaPublishBatchSize,
+        @Value("${reservation.queue.kafka.publish-timeout-ms:5000}") long kafkaPublishTimeoutMs,
+        @Value("${reservation.queue.kafka.publish-retry-delay-ms:1000}") long kafkaPublishRetryDelayMs,
+        @Value("${reservation.queue.kafka.publish-claim-timeout-ms:30000}") long kafkaPublishClaimTimeoutMs
+    ) {
+        this(redisTemplate, reservationService, objectMapper, meterRegistry,
+            kafkaTemplateProvider.getIfAvailable(), QueueBackend.from(queueBackend), kafkaTopic,
+            kafkaPublishBatchSize, kafkaPublishTimeoutMs, kafkaPublishRetryDelayMs,
+            kafkaPublishClaimTimeoutMs);
+    }
+
+    /** 保留原构造器供现有单元测试直接创建 Redis 模式服务。 */
     public ReservationQueueService(
         RedisTemplate<String, Object> redisTemplate,
         ReservationService reservationService,
         ObjectMapper objectMapper,
         MeterRegistry meterRegistry
     ) {
+        this(redisTemplate, reservationService, objectMapper, meterRegistry, null,
+            QueueBackend.REDIS, "reservation.requests.v1", 50, 5000, 1000, 30000);
+    }
+
+    private ReservationQueueService(
+        RedisTemplate<String, Object> redisTemplate,
+        ReservationService reservationService,
+        ObjectMapper objectMapper,
+        MeterRegistry meterRegistry,
+        KafkaTemplate<String, String> kafkaTemplate,
+        QueueBackend queueBackend,
+        String kafkaTopic,
+        int kafkaPublishBatchSize,
+        long kafkaPublishTimeoutMs,
+        long kafkaPublishRetryDelayMs,
+        long kafkaPublishClaimTimeoutMs
+    ) {
         this.redisTemplate = redisTemplate;
         this.reservationService = reservationService;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
+        this.kafkaTemplate = kafkaTemplate;
+        this.queueBackend = queueBackend;
+        this.kafkaTopic = kafkaTopic;
+        this.kafkaPublishBatchSize = kafkaPublishBatchSize;
+        this.kafkaPublishTimeoutMs = kafkaPublishTimeoutMs;
+        this.kafkaPublishRetryDelayMs = kafkaPublishRetryDelayMs;
+        this.kafkaPublishClaimTimeoutMs = kafkaPublishClaimTimeoutMs;
+
+        if (queueBackend == QueueBackend.KAFKA && kafkaTemplate == null) {
+            throw new IllegalStateException("Kafka queue backend requires a KafkaTemplate");
+        }
 
         meterRegistry.gauge("reservation.queue.length", this, ReservationQueueService::getQueueLength);
         meterRegistry.gauge("reservation.queue.processing.length", this, ReservationQueueService::getProcessingLength);
@@ -237,11 +360,21 @@ public class ReservationQueueService {
 
         try {
             String json = objectMapper.writeValueAsString(new QueueItem(request, 0, requestId));
-            Long result = redisTemplate.execute(
-                ENQUEUE_SCRIPT,
-                List.of(QUEUE_KEY, USER_SET_KEY, statusKey, ownerKey),
-                request.getUserId().toString(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
-            );
+            Long result;
+            if (queueBackend == QueueBackend.KAFKA) {
+                result = redisTemplate.execute(
+                    KAFKA_ENQUEUE_SCRIPT,
+                    List.of(USER_SET_KEY, statusKey, ownerKey, KAFKA_OUTBOX_PAYLOAD_KEY, KAFKA_OUTBOX_KEY),
+                    request.getUserId().toString(), json, RequestStatus.QUEUED.name(), statusExpirySeconds(),
+                    requestId, System.currentTimeMillis()
+                );
+            } else {
+                result = redisTemplate.execute(
+                    ENQUEUE_SCRIPT,
+                    List.of(QUEUE_KEY, USER_SET_KEY, statusKey, ownerKey),
+                    request.getUserId().toString(), json, RequestStatus.QUEUED.name(), statusExpirySeconds()
+                );
+            }
 
             if (!Long.valueOf(1).equals(result)) {
                 throw new DuplicateReservationException("A reservation request for this user is already in queue");
@@ -297,24 +430,39 @@ public class ReservationQueueService {
     }
 
     public long getQueueLength() {
+        if (queueBackend == QueueBackend.KAFKA) {
+            Long size = redisTemplate.opsForZSet().size(KAFKA_OUTBOX_KEY);
+            return size != null ? size : 0;
+        }
         Long size = redisTemplate.opsForList().size(QUEUE_KEY);
         return size != null ? size : 0;
     }
 
     public long getProcessingLength() {
+        if (queueBackend == QueueBackend.KAFKA) {
+            return 0;
+        }
         Long size = redisTemplate.opsForZSet().size(PROCESSING_KEY);
         return size != null ? size : 0;
     }
 
     public long getDLQLength() {
+        if (queueBackend == QueueBackend.KAFKA) {
+            Object count = redisTemplate.opsForValue().get(KAFKA_DLT_COUNT_KEY);
+            return count instanceof Number number ? number.longValue() : 0;
+        }
         Long size = redisTemplate.opsForList().size(DLQ_KEY);
         return size != null ? size : 0;
+    }
+
+    public String getBackendName() {
+        return queueBackend.name().toLowerCase(Locale.ROOT);
     }
 
     /**
      * 判断该请求是否已经产生业务效果。
      *
-     * <p>Redis 只是状态缓存层，PostgreSQL 才是最终事实源。
+     * <p>Redis 只是状态缓存层，MySQL 才是最终事实源。
      * 当 Redis 的 SUCCESS 状态因进程崩溃或写入失败而丢失时，
      * 这里会以数据库中的 request_id 幂等键为准进行判定。</p>
      */
@@ -327,7 +475,7 @@ public class ReservationQueueService {
 
     @Scheduled(fixedDelayString = "${reservation.queue.poll-interval-ms:100}")
     public void processReservationQueue() {
-        if (!running) {
+        if (!running || queueBackend != QueueBackend.REDIS) {
             return;
         }
 
@@ -381,6 +529,148 @@ public class ReservationQueueService {
             } catch (Exception e) {
                 handleRetryableError(claimed, e, "technical");
             }
+        }
+    }
+
+    /** 将 Redis Outbox 中的到期消息发布到 Kafka；发送成功后才删除 Outbox 记录。 */
+    @Scheduled(fixedDelayString = "${reservation.queue.kafka.publisher-interval-ms:100}")
+    @SuppressWarnings("unchecked")
+    public void publishKafkaOutbox() {
+        if (!running || queueBackend != QueueBackend.KAFKA) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        List<Object> claimed = (List<Object>) (List<?>) redisTemplate.execute(
+            KAFKA_OUTBOX_CLAIM_SCRIPT,
+            List.of(KAFKA_OUTBOX_KEY, KAFKA_OUTBOX_PAYLOAD_KEY),
+            now, kafkaPublishBatchSize, now + kafkaPublishClaimTimeoutMs
+        );
+        if (claimed == null || claimed.isEmpty()) {
+            return;
+        }
+
+        for (int i = 0; i + 1 < claimed.size(); i += 2) {
+            String requestId = String.valueOf(claimed.get(i));
+            String rawJson = String.valueOf(claimed.get(i + 1));
+            try {
+                QueueItem item = objectMapper.readValue(rawJson, QueueItem.class);
+                if (!isValid(item) || !requestId.equals(item.requestId)) {
+                    throw new IllegalArgumentException("Invalid Kafka outbox payload");
+                }
+                kafkaTemplate.send(kafkaTopic, item.request.getUserId().toString(), rawJson)
+                    .get(kafkaPublishTimeoutMs, TimeUnit.MILLISECONDS);
+                Long acknowledged = redisTemplate.execute(
+                    KAFKA_OUTBOX_ACK_SCRIPT,
+                    List.of(KAFKA_OUTBOX_KEY, KAFKA_OUTBOX_PAYLOAD_KEY),
+                    requestId, rawJson
+                );
+                if (!Long.valueOf(1).equals(acknowledged)) {
+                    logger.warn("Kafka message sent but Outbox acknowledgement was skipped: {}", requestId);
+                }
+                meterRegistry.counter("reservation.kafka.published").increment();
+            } catch (Exception e) {
+                redisTemplate.opsForZSet().add(
+                    KAFKA_OUTBOX_KEY, requestId, System.currentTimeMillis() + kafkaPublishRetryDelayMs
+                );
+                meterRegistry.counter("reservation.kafka.publish.errors").increment();
+                logger.error("Failed to publish reservation Outbox message: {}", requestId, e);
+            }
+        }
+    }
+
+    /** Kafka 消费入口。抛出的可重试异常由 @RetryableTopic 调度，不在监听线程中阻塞等待。 */
+    public void processKafkaMessage(String rawJson) {
+        QueueItem item;
+        try {
+            item = objectMapper.readValue(rawJson, QueueItem.class);
+        } catch (Exception e) {
+            throw new KafkaReservationProcessingException("Malformed reservation Kafka message", e);
+        }
+        if (!isValid(item)) {
+            throw new KafkaReservationProcessingException("Invalid reservation Kafka message");
+        }
+        if (isAlreadyProcessed(item.requestId)) {
+            completeKafka(item, RequestStatus.SUCCESS);
+            return;
+        }
+
+        updateStatus(item.requestId, RequestStatus.PROCESSING);
+        try {
+            if (item.request.getMode() == ReservationMode.MANUAL) {
+                reservationService.reserveSlot(item.request.getUserId(), item.request.getSlotId(), item.requestId);
+            } else {
+                reservationService.reserveNearestSlot(item.request.getUserId(), item.requestId);
+            }
+            meterRegistry.counter("reservation.queue.processed").increment();
+            completeKafka(item, RequestStatus.SUCCESS);
+        } catch (RequestAlreadyProcessedException e) {
+            logger.info("Kafka request {} already persisted; treating as idempotent success", item.requestId);
+            meterRegistry.counter("reservation.queue.idempotent").increment();
+            if (reservationService.hasProcessedRequest(item.requestId)) {
+                completeKafka(item, RequestStatus.SUCCESS);
+            } else {
+                throw retryKafka(item, e, "idempotency");
+            }
+        } catch (DuplicateReservationException e) {
+            meterRegistry.counter("reservation.queue.duplicate").increment();
+            completeKafka(item, RequestStatus.FAILED);
+        } catch (ReservationNotAvailableException e) {
+            meterRegistry.counter("reservation.queue.no_slots").increment();
+            completeKafka(item, RequestStatus.FAILED);
+        } catch (ReservationCapacityExceededException e) {
+            throw retryKafka(item, e, "capacity_exceeded");
+        } catch (BusinessException e) {
+            throw retryKafka(item, e, "business_rule");
+        } catch (Exception e) {
+            throw retryKafka(item, e, "technical");
+        }
+    }
+
+    /** 由 Kafka DLT 处理器调用，释放用户占位并留下可观测的失败状态。 */
+    public void handleKafkaDeadLetter(String rawJson) {
+        try {
+            QueueItem item = objectMapper.readValue(rawJson, QueueItem.class);
+            if (isValid(item)) {
+                completeKafka(item, RequestStatus.FAILED);
+                logger.warn("Moved reservation Kafka message to DLT: {}", item.requestId);
+            } else {
+                logger.error("Kafka DLT received an invalid reservation message: {}", rawJson);
+            }
+        } catch (Exception e) {
+            logger.error("Kafka DLT received a malformed reservation message: {}", rawJson, e);
+        } finally {
+            redisTemplate.opsForValue().increment(KAFKA_DLT_COUNT_KEY);
+            meterRegistry.counter("reservation.dlq.moved", "backend", "kafka").increment();
+        }
+    }
+
+    private KafkaReservationProcessingException retryKafka(QueueItem item, Exception error, String errorType) {
+        updateStatus(item.requestId, RequestStatus.QUEUED);
+        meterRegistry.counter("reservation.queue.process.errors." + errorType).increment();
+        logger.error("Kafka reservation processing failed (type: {}, requestId: {})",
+            errorType, item.requestId, error);
+        return new KafkaReservationProcessingException(
+            "Retryable reservation Kafka failure: " + item.requestId, error
+        );
+    }
+
+    private void completeKafka(QueueItem item, RequestStatus status) {
+        redisTemplate.execute(
+            KAFKA_COMPLETE_SCRIPT,
+            List.of(STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
+                STATUS_OWNER_KEY_PREFIX + item.requestId),
+            status.name(), item.request.getUserId().toString(), statusExpirySeconds()
+        );
+    }
+
+    public static class KafkaReservationProcessingException extends RuntimeException {
+        public KafkaReservationProcessingException(String message) {
+            super(message);
+        }
+
+        public KafkaReservationProcessingException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 

@@ -1,9 +1,9 @@
 spring:
   # 开发环境数据库连接；可通过 SPRING_DATASOURCE_* 环境变量覆盖。
   datasource:
-    driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/reservationdb
-    username: ${DB_USERNAME:postgres}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/reservationdb?useUnicode=true&characterEncoding=UTF-8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:azki}
     password: ${DB_PASSWORD}
 
   # 开发阶段输出 SQL，便于观察 Repository 实际执行的查询。

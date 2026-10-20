@@ -6,40 +6,32 @@
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
 
     <!--
-      Slot 起止时间是用户输入的上海本地业务时间，继续保留 timestamp without time zone。
-      审计与预约生命周期字段代表绝对时刻：把旧 UTC 数值解释为 UTC 后改为 timestamptz。
+      MySQL 没有 PostgreSQL timestamptz。Slot 起止时间是上海本地业务墙上时间，保存为 DATETIME(6)；
+      审计与预约生命周期字段代表绝对时刻，同样保存为 DATETIME(6)，但 JDBC/Hibernate 统一以 UTC 读写。
+      两类字段由 Java 的 LocalDateTime 与 Instant 明确区分，避免依赖数据库会话时区隐式转换。
     -->
     <changeSet id="7-unify-time-semantics" author="Hu">
-        <sql splitStatements="false" stripComments="false"><![CDATA[
-            DO $$
-            BEGIN
-                EXECUTE format(
-                    'ALTER DATABASE %I SET timezone TO %L',
-                    current_database(),
-                    'Asia/Shanghai'
-                );
-            END $$;
-        ]]></sql>
-
         <sql><![CDATA[
             ALTER TABLE users
-                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
-                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+                MODIFY COLUMN created_date DATETIME(6) NOT NULL,
+                MODIFY COLUMN last_modified_date DATETIME(6) NULL;
 
             ALTER TABLE resource
-                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
-                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+                MODIFY COLUMN created_date DATETIME(6) NOT NULL,
+                MODIFY COLUMN last_modified_date DATETIME(6) NULL;
 
             ALTER TABLE available_slot
-                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
-                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+                MODIFY COLUMN start_time DATETIME(6) NOT NULL COMMENT 'Asia/Shanghai business wall-clock time',
+                MODIFY COLUMN end_time DATETIME(6) NOT NULL COMMENT 'Asia/Shanghai business wall-clock time',
+                MODIFY COLUMN created_date DATETIME(6) NOT NULL,
+                MODIFY COLUMN last_modified_date DATETIME(6) NULL;
 
             ALTER TABLE reservation
-                ALTER COLUMN reserved_at TYPE TIMESTAMPTZ USING reserved_at AT TIME ZONE 'UTC',
-                ALTER COLUMN cancelled_at TYPE TIMESTAMPTZ USING cancelled_at AT TIME ZONE 'UTC',
-                ALTER COLUMN completed_at TYPE TIMESTAMPTZ USING completed_at AT TIME ZONE 'UTC',
-                ALTER COLUMN created_date TYPE TIMESTAMPTZ USING created_date AT TIME ZONE 'UTC',
-                ALTER COLUMN last_modified_date TYPE TIMESTAMPTZ USING last_modified_date AT TIME ZONE 'UTC';
+                MODIFY COLUMN reserved_at DATETIME(6) NOT NULL COMMENT 'UTC instant',
+                MODIFY COLUMN cancelled_at DATETIME(6) NULL COMMENT 'UTC instant',
+                MODIFY COLUMN completed_at DATETIME(6) NULL COMMENT 'UTC instant',
+                MODIFY COLUMN created_date DATETIME(6) NOT NULL COMMENT 'UTC instant',
+                MODIFY COLUMN last_modified_date DATETIME(6) NULL COMMENT 'UTC instant';
         ]]></sql>
     </changeSet>
 </databaseChangeLog>

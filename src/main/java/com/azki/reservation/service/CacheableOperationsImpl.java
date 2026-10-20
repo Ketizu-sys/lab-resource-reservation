@@ -30,7 +30,7 @@ public class CacheableOperationsImpl implements CacheableOperations {
     @Override
     @Cacheable(value = "nextSlot", key = "'single'")
     public Optional<AvailableSlot> findNextAvailableSlotCached(LocalDateTime now) {
-        // 只有缓存未命中时才会进入方法体并查询 PostgreSQL。
+        // 只有缓存未命中时才会进入方法体并查询 MySQL。
         logger.debug("Finding next available time slot (cached)");
         Optional<AvailableSlot> slot = timeSlotRepository
             .findFirstByIsReservedFalseAndStartTimeGreaterThanEqualOrderByStartTimeAsc(now);
