@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 当前领域模型是一时段一有效预约；先收口历史展示值，再由 MySQL 约束守住不变量。 -->
+    <changeSet id="11-enforce-single-capacity" author="Hu" dbms="mysql">
+        <sql>
+            UPDATE resource SET capacity = 1 WHERE capacity &lt;&gt; 1;
+        </sql>
+        <sql>
+            ALTER TABLE resource
+            ADD CONSTRAINT chk_resource_capacity_one CHECK (capacity = 1);
+        </sql>
+        <rollback>
+            ALTER TABLE resource DROP CHECK chk_resource_capacity_one;
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

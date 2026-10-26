@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataAccessException;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -34,13 +35,28 @@ class AdminResourceSlotIntegrationTest extends ContainerIntegrationTestSupport {
     @Test
     void shouldCreateUpdateAndSoftDisableResource() {
         var created = resourceService.create(new AdminResourceRequest("R-" + UUID.randomUUID(), ResourceType.LAB,
-                "A1", ResourceStatus.ACTIVE, 2, "lab"));
+                "A1", ResourceStatus.ACTIVE, 1, "lab"));
         var updated = resourceService.update(created.id(), new AdminResourceRequest(created.name(), ResourceType.LAB,
-                "A2", ResourceStatus.MAINTENANCE, 3, "updated"));
+                "A2", ResourceStatus.MAINTENANCE, 1, "updated"));
         assertEquals("A2", updated.location());
         resourceService.disable(created.id());
         assertEquals(ResourceStatus.DISABLED, resources.findById(created.id()).orElseThrow().getStatus());
         assertTrue(resources.existsById(created.id()));
+    }
+
+    @Test
+    void shouldRejectCapacityAboveOneInServiceAndDatabase() {
+        assertThrows(BusinessException.class, () -> resourceService.create(
+                new AdminResourceRequest("invalid-service-" + UUID.randomUUID(), ResourceType.LAB,
+                        "A1", ResourceStatus.ACTIVE, 2, null)));
+
+        Resource invalid = new Resource();
+        invalid.setName("invalid-db-" + UUID.randomUUID());
+        invalid.setType(ResourceType.LAB);
+        invalid.setLocation("A1");
+        invalid.setStatus(ResourceStatus.ACTIVE);
+        invalid.setCapacity(2);
+        assertThrows(DataAccessException.class, () -> resources.saveAndFlush(invalid));
     }
 
     @Test

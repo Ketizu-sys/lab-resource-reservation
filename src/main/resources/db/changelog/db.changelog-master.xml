@@ -16,5 +16,6 @@
     <include file="/db/changelog/changeset-008-demo-data.xml"/>
     <include file="/db/changelog/changeset-009-reservation-request-id.xml"/>
     <include file="/db/changelog/changeset-010-mysql-storage.xml"/>
+    <include file="/db/changelog/changeset-011-single-capacity.xml"/>
 
 </databaseChangeLog>

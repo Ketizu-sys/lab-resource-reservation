@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 /** 登录成功后的响应，包含 JWT、令牌类型、用户基本信息、角色和过期时间。 */
 @Data
@@ -19,5 +19,5 @@ public class LoginResponseDto {
     private String email;
     private String userName;
     private UserRole role;
-    private LocalDateTime expiresAt;
+    private Instant expiresAt;
 }

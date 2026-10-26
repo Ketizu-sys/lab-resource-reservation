@@ -4,6 +4,7 @@ import com.azki.reservation.dto.admin.AdminResourceRequest;
 import com.azki.reservation.dto.resource.ResourceResponseDto;
 import com.azki.reservation.entity.Resource;
 import com.azki.reservation.entity.ResourceStatus;
+import com.azki.reservation.exception.BusinessException;
 import com.azki.reservation.exception.ResourceNotFoundException;
 import com.azki.reservation.repository.ResourceRepository;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,9 @@ public class AdminResourceService {
     }
 
     private Resource apply(Resource r, AdminResourceRequest q) {
+        if (q.capacity() != 1) {
+            throw new BusinessException("当前版本采用单时段单预约模型，资源容量必须为 1");
+        }
         r.setName(q.name().trim()); r.setType(q.type()); r.setLocation(q.location().trim());
         r.setStatus(q.status()); r.setCapacity(q.capacity()); r.setDescription(q.description()); return r;
     }

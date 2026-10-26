@@ -41,6 +41,8 @@ public class ReservationQueueService {
 
     static final String QUEUE_KEY = "reservation:queue";
     static final String PROCESSING_KEY = "reservation:queue:processing";
+    static final String CLAIM_PAYLOAD_KEY = "reservation:queue:claim:payload";
+    static final String CLAIM_REQUEST_ID_KEY = "reservation:queue:claim:request-id";
     static final String DLQ_KEY = "reservation:dlq";
     static final String USER_SET_KEY = "reservation:users:queued";
     static final String STATUS_KEY_PREFIX = "reservation:status:";
@@ -111,52 +113,89 @@ public class ReservationQueueService {
         return 1
         """, Long.class);
 
-    /** 从等待队列领取一条消息，并记录领取时间。 */
+    /**
+     * 从等待队列领取一条消息，并为本轮处理生成唯一 Claim 记录。
+     * ZSet 只保存唯一 claimToken，两个 Hash 分别保存载荷和 requestId；即使同一消息
+     * 超时后被再次领取，新旧消费者持有的 Token 也不同。
+     */
     private static final RedisScript<String> CLAIM_SCRIPT = new DefaultRedisScript<>("""
+        local function decodeItem(raw)
+            local ok, value = pcall(cjson.decode, raw)
+            if not ok then return nil end
+            if type(value) == 'string' then
+                ok, value = pcall(cjson.decode, value)
+                if not ok then return nil end
+            end
+            if type(value) ~= 'table' then return nil end
+            return value
+        end
         local item = redis.call('LPOP', KEYS[1])
         if item then
-            redis.call('ZADD', KEYS[2], ARGV[1], item)
+            local requestId = ''
+            local decoded = decodeItem(item)
+            if decoded and decoded.requestId then
+                requestId = tostring(decoded.requestId)
+            end
+            redis.call('ZADD', KEYS[2], ARGV[1], ARGV[2])
+            redis.call('HSET', KEYS[3], ARGV[2], item)
+            redis.call('HSET', KEYS[4], ARGV[2], cjson.encode(requestId))
+            return item
         end
-        return item
+        return nil
         """, String.class);
 
-    /** 确认终态，同时清理处理中记录和用户占位。 */
+    /** 校验 requestId + claimToken 后确认终态，防止过期消费者确认新一轮 Claim。 */
     private static final RedisScript<Long> COMPLETE_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('HGET', KEYS[3], ARGV[1]) ~= ARGV[2] then
+            return 0
+        end
         if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
             return 0
         end
-        redis.call('SET', KEYS[2], ARGV[2])
-        redis.call('EXPIRE', KEYS[2], ARGV[4])
-        redis.call('SREM', KEYS[3], ARGV[3])
+        redis.call('HDEL', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[3], ARGV[1])
         redis.call('SET', KEYS[4], ARGV[3])
-        redis.call('EXPIRE', KEYS[4], ARGV[4])
+        redis.call('EXPIRE', KEYS[4], ARGV[5])
+        redis.call('SREM', KEYS[5], ARGV[4])
+        redis.call('SET', KEYS[6], ARGV[4])
+        redis.call('EXPIRE', KEYS[6], ARGV[5])
         return 1
         """, Long.class);
 
-    /** 将失败的同一条消息原子地从处理中集合移回等待队列。 */
+    /** 校验当前 Claim 后，将失败消息原子地移回等待队列。 */
     private static final RedisScript<Long> REQUEUE_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('HGET', KEYS[3], ARGV[1]) ~= ARGV[2] then
+            return 0
+        end
         if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
             return 0
         end
-        redis.call('RPUSH', KEYS[2], ARGV[2])
-        redis.call('SET', KEYS[3], ARGV[3])
-        redis.call('EXPIRE', KEYS[3], ARGV[4])
-        redis.call('SET', KEYS[4], ARGV[5])
-        redis.call('EXPIRE', KEYS[4], ARGV[4])
-        return 1
-        """, Long.class);
-
-    /** 将达到重试上限的同一条消息原子地转移到 DLQ。 */
-    private static final RedisScript<Long> DLQ_SCRIPT = new DefaultRedisScript<>("""
-        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
-            return 0
-        end
-        redis.call('RPUSH', KEYS[2], ARGV[2])
-        redis.call('SET', KEYS[3], ARGV[3])
-        redis.call('EXPIRE', KEYS[3], ARGV[5])
-        redis.call('SREM', KEYS[4], ARGV[4])
+        redis.call('HDEL', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[3], ARGV[1])
+        redis.call('RPUSH', KEYS[4], ARGV[3])
         redis.call('SET', KEYS[5], ARGV[4])
         redis.call('EXPIRE', KEYS[5], ARGV[5])
+        redis.call('SET', KEYS[6], ARGV[6])
+        redis.call('EXPIRE', KEYS[6], ARGV[5])
+        return 1
+        """, Long.class);
+
+    /** 校验当前 Claim 后，将达到重试上限的消息原子地转移到 DLQ。 */
+    private static final RedisScript<Long> DLQ_SCRIPT = new DefaultRedisScript<>("""
+        if redis.call('HGET', KEYS[3], ARGV[1]) ~= ARGV[2] then
+            return 0
+        end
+        if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
+            return 0
+        end
+        redis.call('HDEL', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[3], ARGV[1])
+        redis.call('RPUSH', KEYS[4], ARGV[3])
+        redis.call('SET', KEYS[5], ARGV[4])
+        redis.call('EXPIRE', KEYS[5], ARGV[6])
+        redis.call('SREM', KEYS[6], ARGV[5])
+        redis.call('SET', KEYS[7], ARGV[5])
+        redis.call('EXPIRE', KEYS[7], ARGV[6])
         return 1
         """, Long.class);
 
@@ -175,8 +214,12 @@ public class ReservationQueueService {
         if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then
             return 0
         end
-        redis.call('RPUSH', KEYS[2], ARGV[1])
-        local item = decodeItem(ARGV[1])
+        local payload = redis.call('HGET', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[3], ARGV[1])
+        if not payload then return 0 end
+        redis.call('RPUSH', KEYS[4], payload)
+        local item = decodeItem(payload)
         if item and item.requestId and item.request and item.request.userId then
             local userId = cjson.encode(tostring(item.request.userId))
             local statusKey = cjson.decode(ARGV[2]) .. item.requestId
@@ -185,7 +228,7 @@ public class ReservationQueueService {
             redis.call('EXPIRE', statusKey, ARGV[5])
             redis.call('SET', ownerKey, userId)
             redis.call('EXPIRE', ownerKey, ARGV[5])
-            redis.call('SREM', KEYS[3], userId)
+            redis.call('SREM', KEYS[5], userId)
         end
         return 1
         """, Long.class);
@@ -204,10 +247,17 @@ public class ReservationQueueService {
         end
         local items = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
         local recovered = 0
-        for _, item in ipairs(items) do
-            if redis.call('ZREM', KEYS[1], item) == 1 then
-                redis.call('RPUSH', KEYS[2], item)
-                local decoded = decodeItem(item)
+        for _, claimToken in ipairs(items) do
+            local payload = redis.call('HGET', KEYS[2], claimToken)
+            if not payload and decodeItem(claimToken) then
+                -- 兼容升级前以原始 QueueItem JSON 作为 ZSet 成员的旧 Claim。
+                payload = claimToken
+            end
+            if payload and redis.call('ZREM', KEYS[1], claimToken) == 1 then
+                redis.call('HDEL', KEYS[2], claimToken)
+                redis.call('HDEL', KEYS[3], claimToken)
+                redis.call('RPUSH', KEYS[4], payload)
+                local decoded = decodeItem(payload)
                 if decoded and decoded.requestId and decoded.request and decoded.request.userId then
                     local userId = cjson.encode(tostring(decoded.request.userId))
                     local statusKey = cjson.decode(ARGV[2]) .. decoded.requestId
@@ -216,7 +266,7 @@ public class ReservationQueueService {
                     redis.call('EXPIRE', statusKey, ARGV[5])
                     redis.call('SET', ownerKey, userId)
                     redis.call('EXPIRE', ownerKey, ARGV[5])
-                    redis.call('SADD', KEYS[3], userId)
+                    redis.call('SADD', KEYS[5], userId)
                 end
                 recovered = recovered + 1
             end
@@ -279,8 +329,8 @@ public class ReservationQueueService {
         }
     }
 
-    /** 同时保存解析后的对象和 Redis 中的原始 JSON，以便精确确认同一条消息。 */
-    private record ClaimedQueueItem(QueueItem item, String rawJson) {
+    /** 保存业务载荷与本轮领取凭证；确认、重试和 DLQ 都必须携带同一 claimToken。 */
+    private record ClaimedQueueItem(QueueItem item, String rawJson, String claimToken) {
     }
 
     @Autowired
@@ -407,18 +457,20 @@ public class ReservationQueueService {
     }
 
     private ClaimedQueueItem claimNextItem() {
+        String claimToken = UUID.randomUUID().toString();
         String rawJson = redisTemplate.execute(
-            CLAIM_SCRIPT, List.of(QUEUE_KEY, PROCESSING_KEY), System.currentTimeMillis()
+            CLAIM_SCRIPT, List.of(QUEUE_KEY, PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY),
+            System.currentTimeMillis(), claimToken
         );
         if (rawJson == null) {
             return null;
         }
 
         try {
-            return new ClaimedQueueItem(objectMapper.readValue(rawJson, QueueItem.class), rawJson);
+            return new ClaimedQueueItem(objectMapper.readValue(rawJson, QueueItem.class), rawJson, claimToken);
         } catch (Exception e) {
             logger.error("Failed to deserialize queue item; moving raw message to DLQ: {}", rawJson, e);
-            moveMalformedClaimToDLQ(rawJson);
+            moveMalformedClaimToDLQ(claimToken);
             return null;
         }
     }
@@ -488,7 +540,7 @@ public class ReservationQueueService {
 
             QueueItem item = claimed.item();
             if (!isValid(item)) {
-                moveMalformedClaimToDLQ(claimed.rawJson());
+                moveMalformedClaimToDLQ(claimed.claimToken());
                 continue;
             }
             if (isAlreadyProcessed(item.requestId)) {
@@ -690,12 +742,13 @@ public class ReservationQueueService {
         QueueItem item = claimed.item();
         Long completed = redisTemplate.execute(
             COMPLETE_SCRIPT,
-            List.of(PROCESSING_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
-                STATUS_OWNER_KEY_PREFIX + item.requestId),
-            claimed.rawJson(), status.name(), item.request.getUserId().toString(), statusExpirySeconds()
+            List.of(PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY,
+                STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY, STATUS_OWNER_KEY_PREFIX + item.requestId),
+            claimed.claimToken(), item.requestId, status.name(), item.request.getUserId().toString(),
+            statusExpirySeconds()
         );
         if (!Long.valueOf(1).equals(completed)) {
-            logger.warn("Completion skipped because processing claim no longer exists: {}", item.requestId);
+            logger.warn("Completion skipped because processing claim is no longer current: {}", item.requestId);
         }
     }
 
@@ -715,13 +768,13 @@ public class ReservationQueueService {
             String updatedJson = objectMapper.writeValueAsString(item);
             Long requeued = redisTemplate.execute(
                 REQUEUE_SCRIPT,
-                List.of(PROCESSING_KEY, QUEUE_KEY, STATUS_KEY_PREFIX + item.requestId,
-                    STATUS_OWNER_KEY_PREFIX + item.requestId),
-                claimed.rawJson(), updatedJson, RequestStatus.QUEUED.name(), statusExpirySeconds(),
-                item.request.getUserId().toString()
+                List.of(PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY, QUEUE_KEY,
+                    STATUS_KEY_PREFIX + item.requestId, STATUS_OWNER_KEY_PREFIX + item.requestId),
+                claimed.claimToken(), item.requestId, updatedJson, RequestStatus.QUEUED.name(),
+                statusExpirySeconds(), item.request.getUserId().toString()
             );
             if (!Long.valueOf(1).equals(requeued)) {
-                logger.warn("Retry skipped because processing claim no longer exists: {}", item.requestId);
+                logger.warn("Retry skipped because processing claim is no longer current: {}", item.requestId);
             }
         } catch (Exception serializationError) {
             logger.error("Failed to serialize retry message: {}", item.requestId, serializationError);
@@ -740,10 +793,10 @@ public class ReservationQueueService {
 
         Long moved = redisTemplate.execute(
             DLQ_SCRIPT,
-            List.of(PROCESSING_KEY, DLQ_KEY, STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY,
-                STATUS_OWNER_KEY_PREFIX + item.requestId),
-            claimed.rawJson(), dlqJson, RequestStatus.FAILED.name(), item.request.getUserId().toString(),
-            statusExpirySeconds()
+            List.of(PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY, DLQ_KEY,
+                STATUS_KEY_PREFIX + item.requestId, USER_SET_KEY, STATUS_OWNER_KEY_PREFIX + item.requestId),
+            claimed.claimToken(), item.requestId, dlqJson, RequestStatus.FAILED.name(),
+            item.request.getUserId().toString(), statusExpirySeconds()
         );
         if (Long.valueOf(1).equals(moved)) {
             meterRegistry.counter("reservation.dlq.moved").increment();
@@ -751,10 +804,11 @@ public class ReservationQueueService {
         }
     }
 
-    private void moveMalformedClaimToDLQ(String rawJson) {
+    private void moveMalformedClaimToDLQ(String claimToken) {
         Long moved = redisTemplate.execute(
-            MALFORMED_TO_DLQ_SCRIPT, List.of(PROCESSING_KEY, DLQ_KEY, USER_SET_KEY),
-            rawJson, STATUS_KEY_PREFIX, STATUS_OWNER_KEY_PREFIX, RequestStatus.FAILED.name(),
+            MALFORMED_TO_DLQ_SCRIPT,
+            List.of(PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY, DLQ_KEY, USER_SET_KEY),
+            claimToken, STATUS_KEY_PREFIX, STATUS_OWNER_KEY_PREFIX, RequestStatus.FAILED.name(),
             statusExpirySeconds()
         );
         if (Long.valueOf(1).equals(moved)) {
@@ -765,7 +819,8 @@ public class ReservationQueueService {
     long recoverStaleClaims() {
         long cutoff = System.currentTimeMillis() - claimTimeoutMs;
         Long recovered = redisTemplate.execute(
-            RECOVER_STALE_SCRIPT, List.of(PROCESSING_KEY, QUEUE_KEY, USER_SET_KEY),
+            RECOVER_STALE_SCRIPT,
+            List.of(PROCESSING_KEY, CLAIM_PAYLOAD_KEY, CLAIM_REQUEST_ID_KEY, QUEUE_KEY, USER_SET_KEY),
             cutoff, STATUS_KEY_PREFIX, STATUS_OWNER_KEY_PREFIX, RequestStatus.QUEUED.name(),
             statusExpirySeconds()
         );

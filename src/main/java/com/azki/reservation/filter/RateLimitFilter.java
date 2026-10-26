@@ -39,7 +39,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String bucketKey = routeGroup(request.getRequestURI()) + ":" + clientKey(request);
+        String bucketKey = routeGroup(request) + ":" + clientKey(request);
         Bucket bucket = buckets.computeIfAbsent(limitMapGrowth(bucketKey), ignored -> config.createBucket());
 
         if (bucket.tryConsume(1)) {
@@ -62,8 +62,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 && !uri.equals("/api/v1/auth/login");
     }
 
-    private String routeGroup(String uri) {
-        return uri.equals("/api/v1/auth/login") ? "login" : "reservation";
+    private String routeGroup(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        if (uri.equals("/api/v1/auth/login")) {
+            return "login";
+        }
+        // 高频状态轮询使用独立 Bucket，不能消耗预约提交和取消操作的额度。
+        if ("GET".equalsIgnoreCase(request.getMethod())
+                && uri.startsWith("/api/v1/me/reservation-requests/")) {
+            return "reservation-status";
+        }
+        return "reservation-command";
     }
 
     private String clientKey(HttpServletRequest request) {

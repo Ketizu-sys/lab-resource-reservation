@@ -139,7 +139,7 @@ POST /api/v1/me/reservation-requests
 - **状态机**：`QUEUED → PROCESSING → SUCCESS / FAILED`
 - **三段结构**：等待 List、处理中 Sorted Set、死信 List（DLQ）
 - **原子性**：7 段 Lua 脚本保证状态转移不会出现中间态
-- **索赔回收**：`recoverStaleClaims()` 回收超过 300 秒未确认的消息，防止进程崩溃丢单
+- **索赔回收**：每次领取生成唯一 `claimToken`；完成、重试和进入 DLQ 前必须校验本轮领取凭证。`recoverStaleClaims()` 回收超过 300 秒未确认的消息，过期消费者不能误删新消费者的 Claim
 - **语义**：at-least-once —— 重复请求由业务层的重叠检测拦截，终态记为 FAILED 而非进入 DLQ
 - **TTL**：请求状态 24 小时过期，过期后查询返回 404
 
@@ -226,11 +226,11 @@ InnoDB 引擎创建。应用连接显式使用 `READ_COMMITTED`，减少范围�
 
 **管理员端**
 
-- 资源管理（创建 / 编辑 / 停用）
+- 资源管理（创建 / 编辑 / 停用）；当前领域模型明确为“单时段单预约”，资源 `capacity` 固定为 1
 - 时段管理（创建 / 批量生成 / 编辑 / 删除）
 - 预约管理（查询 / 筛选 / 强制取消）
 
-> 自动预约页的轮询逻辑抽离为独立 composable（`useReservationRequestPolling`）：间隔 1000ms、最多 60 次、终态立即停止、组件卸载与退出登录时自动清理，避免 timer 泄漏。
+> 自动预约页的轮询逻辑抽离为独立 composable（`useReservationRequestPolling`）：默认每 4 秒查询一次、最多 60 次；遇到 `429` 时遵循 `Retry-After`，临时网络错误有限重试；新任务启动后会丢弃旧请求的迟到响应，终态、组件卸载和退出登录时自动停止。
 
 ---
 

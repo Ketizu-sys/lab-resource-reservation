@@ -2,7 +2,8 @@ package com.azki.reservation.security.util;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,7 +22,7 @@ class JwtUtilTest {
 
         assertTrue(jwtUtil.isTokenValid(token));
         assertEquals("user@example.com", jwtUtil.extractEmail(token));
-        assertTrue(jwtUtil.getExpirationDate(token).isAfter(LocalDateTime.now()));
+        assertTrue(jwtUtil.getExpirationDate(token).isAfter(Instant.now()));
     }
 
     @Test
@@ -41,5 +42,21 @@ class JwtUtilTest {
         Thread.sleep(5);
 
         assertFalse(jwtUtil.isTokenValid(token));
+    }
+
+    @Test
+    void expirationInstantShouldNotDependOnServerDefaultTimeZone() {
+        JwtUtil jwtUtil = new JwtUtil(TEST_SECRET, 60_000);
+        String token = jwtUtil.generateToken("timezone@example.com");
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            Instant utcResult = jwtUtil.getExpirationDate(token);
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));
+            Instant shanghaiResult = jwtUtil.getExpirationDate(token);
+            assertEquals(utcResult, shanghaiResult);
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 }

@@ -17,6 +17,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -170,6 +177,7 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
     void shouldRecoverExpiredProcessingClaim() {
         String requestId = queueService.enqueueReservationRequest(request(7L));
         Object raw = redisTemplate.opsForList().leftPop(ReservationQueueService.QUEUE_KEY);
+        // 升级前的处理中集合直接保存原始消息；恢复脚本仍需兼容该格式。
         redisTemplate.opsForZSet().add(ReservationQueueService.PROCESSING_KEY, raw, 0);
         redisTemplate.opsForSet().remove(ReservationQueueService.USER_SET_KEY, "7");
 
@@ -182,6 +190,58 @@ class ReservationQueueServiceRedisIntegrationTest extends ContainerIntegrationTe
         assertEquals(ReservationQueueService.RequestStatus.QUEUED.name(),
                 queueService.getRequestStatus(requestId, 7L));
         assertNull(queueService.getRequestStatus(requestId, 999L));
+    }
+
+    @Test
+    void expiredConsumerMustNotAcknowledgeNewClaimForSameRequest() throws Exception {
+        String requestId = queueService.enqueueReservationRequest(request(10L));
+        CountDownLatch firstConsumerEntered = new CountDownLatch(1);
+        CountDownLatch secondConsumerEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstConsumer = new CountDownLatch(1);
+        CountDownLatch releaseSecondConsumer = new CountDownLatch(1);
+        AtomicInteger invocations = new AtomicInteger();
+
+        when(reservationService.reserveNearestSlot(eq(10L), eq(requestId))).thenAnswer(invocation -> {
+            int current = invocations.incrementAndGet();
+            if (current == 1) {
+                firstConsumerEntered.countDown();
+                assertTrue(releaseFirstConsumer.await(10, TimeUnit.SECONDS));
+            } else if (current == 2) {
+                secondConsumerEntered.countDown();
+                assertTrue(releaseSecondConsumer.await(10, TimeUnit.SECONDS));
+            }
+            return null;
+        });
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = executor.submit(queueService::processReservationQueue);
+            assertTrue(firstConsumerEntered.await(10, TimeUnit.SECONDS));
+
+            // A 的 Claim 立即过期；B 回收同一消息并获得新的 claimToken。
+            ReflectionTestUtils.setField(queueService, "claimTimeoutMs", 0L);
+            Future<?> second = executor.submit(queueService::processReservationQueue);
+            assertTrue(secondConsumerEntered.await(10, TimeUnit.SECONDS));
+
+            // 旧消费者 A 先完成，但它不能删除 B 当前持有的 Claim。
+            releaseFirstConsumer.countDown();
+            first.get(10, TimeUnit.SECONDS);
+            assertEquals(1, queueService.getProcessingLength());
+            assertTrue(queueService.isUserAlreadyInQueue(10L));
+            assertEquals(ReservationQueueService.RequestStatus.PROCESSING.name(),
+                queueService.getRequestStatus(requestId, 10L));
+
+            releaseSecondConsumer.countDown();
+            second.get(10, TimeUnit.SECONDS);
+            assertEquals(0, queueService.getProcessingLength());
+            assertFalse(queueService.isUserAlreadyInQueue(10L));
+            assertEquals(ReservationQueueService.RequestStatus.SUCCESS.name(),
+                queueService.getRequestStatus(requestId, 10L));
+        } finally {
+            releaseFirstConsumer.countDown();
+            releaseSecondConsumer.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private ReservationRequestDto request(Long userId) {
