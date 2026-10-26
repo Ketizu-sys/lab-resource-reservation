@@ -14,7 +14,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** 使用真实 PostgreSQL 验证 dev 管理员初始化会安全落库并加密密码。 */
+/** 使用真实 MySQL 验证 dev 管理员初始化会安全落库并加密密码。 */
 @SpringBootTest(properties = {
         "management.server.port=8080",
         "reservation.scheduling.enabled=false",
@@ -35,7 +35,7 @@ class AdminAccountInitializerIntegrationTest extends ContainerIntegrationTestSup
     private PasswordEncoder passwordEncoder;
 
     @Test
-    void configuredAdministratorShouldBeCreatedInPostgresWithEncryptedPassword() {
+    void configuredAdministratorShouldBeCreatedInMysqlWithEncryptedPassword() {
         var admin = userRepository.findByEmail("bootstrap-admin@example.com").orElseThrow();
 
         assertEquals("bootstrap-admin", admin.getUserName());

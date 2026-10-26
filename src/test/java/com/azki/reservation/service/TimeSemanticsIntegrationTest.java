@@ -12,6 +12,8 @@ import com.azki.reservation.repository.ResourceRepository;
 import com.azki.reservation.repository.TimeSlotRepository;
 import com.azki.reservation.repository.UserRepository;
 import com.azki.reservation.support.ContainerIntegrationTestSupport;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,7 +31,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-/** 验证本地业务时间与绝对生命周期时间在 PostgreSQL、实体和 API 之间没有八小时偏移。 */
+/** 验证本地业务时间与绝对生命周期时间在 MySQL、实体和 API 之间没有八小时偏移。 */
 @SpringBootTest
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
@@ -45,10 +47,11 @@ class TimeSemanticsIntegrationTest extends ContainerIntegrationTestSupport {
     @Autowired private ReservationService reservationService;
     @Autowired private ReservationExpiryService reservationExpiryService;
     @Autowired private ReservationDtoMapper reservationDtoMapper;
+    @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbc;
 
     @Test
-    void shouldKeepSlotWallClockTimeAndLifecycleInstantConsistent() {
+    void shouldKeepSlotWallClockTimeAndLifecycleInstantConsistent() throws Exception {
         String suffix = UUID.randomUUID().toString();
         User user = createUser("time-1-" + suffix + "@example.com");
         Resource resource = createResource("time-resource-" + suffix);
@@ -60,13 +63,26 @@ class TimeSemanticsIntegrationTest extends ContainerIntegrationTestSupport {
         assertNotNull(reloaded.getReservedAt());
         assertNotNull(reloaded.getCreatedDate());
         assertEquals(startTime, reloaded.getAvailableSlot().getStartTime());
-        assertEquals(LocalDateTime.ofInstant(reloaded.getReservedAt(), BUSINESS_ZONE),
-                reservationDtoMapper.toDto(reloaded).reservedAt());
+        var response = reservationDtoMapper.toDto(reloaded);
+        LocalDateTime localReservedAt = LocalDateTime.ofInstant(reloaded.getReservedAt(), BUSINESS_ZONE);
+        assertEquals(localReservedAt, response.reservedAt());
 
-        String expectedDatabaseDisplay = LocalDateTime.ofInstant(reloaded.getReservedAt(), BUSINESS_ZONE)
+        String expectedSlotDatabaseTime = startTime
                 .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        assertEquals(expectedDatabaseDisplay, jdbc.queryForObject(
-                "SELECT to_char(reserved_at, 'YYYY-MM-DD HH24:MI:SS') FROM reservation WHERE id = ?",
+        assertEquals(expectedSlotDatabaseTime, jdbc.queryForObject(
+                "SELECT DATE_FORMAT(start_time, '%Y-%m-%d %H:%i:%s') FROM available_slot WHERE id = ?",
+                String.class, slot.getId()));
+
+        JsonNode frontendPayload = objectMapper.readTree(objectMapper.writeValueAsBytes(response));
+        assertEquals(startTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+                frontendPayload.path("startTime").asText());
+        assertEquals(localReservedAt.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+                frontendPayload.path("reservedAt").asText());
+
+        String expectedDatabaseUtc = LocalDateTime.ofInstant(reloaded.getReservedAt(), java.time.ZoneOffset.UTC)
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        assertEquals(expectedDatabaseUtc, jdbc.queryForObject(
+                "SELECT DATE_FORMAT(reserved_at, '%Y-%m-%d %H:%i:%s') FROM reservation WHERE id = ?",
                 String.class, reloaded.getId()));
 
         reservationService.cancelReservation(reloaded.getId(), user.getId());
@@ -89,10 +105,10 @@ class TimeSemanticsIntegrationTest extends ContainerIntegrationTestSupport {
         assertEquals(ReservationStatus.COMPLETED, completed.getStatus());
         assertNotNull(completed.getCompletedAt());
 
-        assertEquals("Asia/Shanghai", jdbc.queryForObject("SHOW TimeZone", String.class));
-        assertEquals("timestamp with time zone", columnType("reservation", "reserved_at"));
-        assertEquals("timestamp with time zone", columnType("reservation", "created_date"));
-        assertEquals("timestamp without time zone", columnType("available_slot", "start_time"));
+        assertEquals("+00:00", jdbc.queryForObject("SELECT @@session.time_zone", String.class));
+        assertEquals("datetime", columnType("reservation", "reserved_at"));
+        assertEquals("datetime", columnType("reservation", "created_date"));
+        assertEquals("datetime", columnType("available_slot", "start_time"));
     }
 
     private User createUser(String email) {
@@ -126,7 +142,7 @@ class TimeSemanticsIntegrationTest extends ContainerIntegrationTestSupport {
         return jdbc.queryForObject("""
                 SELECT data_type
                 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
                 """, String.class, table, column);
     }
 }

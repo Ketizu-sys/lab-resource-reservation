@@ -59,6 +59,23 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void statusPollingShouldNotConsumeReservationCommandBucket() throws Exception {
+        filter.doFilter(request("POST", "/api/v1/me/reservation-requests", "10.0.0.3"),
+            new MockHttpServletResponse(), new MockFilterChain());
+
+        MockHttpServletResponse firstPoll = new MockHttpServletResponse();
+        filter.doFilter(request("GET", "/api/v1/me/reservation-requests/request-1", "10.0.0.3"),
+            firstPoll, new MockFilterChain());
+
+        MockHttpServletResponse secondPoll = new MockHttpServletResponse();
+        filter.doFilter(request("GET", "/api/v1/me/reservation-requests/request-1", "10.0.0.3"),
+            secondPoll, new MockFilterChain());
+
+        assertEquals(200, firstPoll.getStatus());
+        assertEquals(429, secondPoll.getStatus());
+    }
+
+    @Test
     void shouldBypassUnprotectedPath() throws Exception {
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -68,7 +85,11 @@ class RateLimitFilterTest {
     }
 
     private MockHttpServletRequest request(String uri, String remoteAddress) {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", uri);
+        return request("POST", uri, remoteAddress);
+    }
+
+    private MockHttpServletRequest request(String method, String uri, String remoteAddress) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, uri);
         request.setRemoteAddr(remoteAddress);
         return request;
     }

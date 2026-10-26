@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- 显式固定 MySQL 的事务型存储引擎；字符集由数据库/容器统一设为 utf8mb4。 -->
+    <changeSet id="10-enforce-mysql-innodb" author="codex" dbms="mysql">
+        <sql>
+            ALTER TABLE users ENGINE = InnoDB;
+            ALTER TABLE resource ENGINE = InnoDB;
+            ALTER TABLE available_slot ENGINE = InnoDB;
+            ALTER TABLE reservation ENGINE = InnoDB;
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

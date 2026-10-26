@@ -18,7 +18,7 @@
             WHERE name = '默认实验室资源'
               AND description = 'V2 迁移为已有时段创建的默认资源';
 
-            INSERT INTO resource
+            INSERT IGNORE INTO resource
                 (name, type, location, status, capacity, description,
                  created_by, created_date, version)
             VALUES
@@ -51,46 +51,47 @@
                  'system', CURRENT_TIMESTAMP, 0),
                 ('数据分析工作站', 'WORKSTATION', '公共计算室 G204', 'ACTIVE', 6,
                  '安装统计分析、科学绘图和数据处理软件，适合科研数据分析。',
-                 'system', CURRENT_TIMESTAMP, 0)
-            ON CONFLICT (name) DO NOTHING;
+                 'system', UTC_TIMESTAMP(6), 0);
 
-            WITH slot_templates(resource_name, day_offset, start_hour, end_hour) AS (
-                VALUES
-                    ('化学分析实验室', 1, 9, 11),
-                    ('化学分析实验室', 2, 14, 16),
-                    ('分子生物学实验室', 1, 14, 16),
-                    ('分子生物学实验室', 3, 9, 11),
-                    ('人工智能研讨室', 1, 10, 12),
-                    ('人工智能研讨室', 2, 15, 17),
-                    ('学术报告会议室', 2, 9, 12),
-                    ('深度学习计算节点', 1, 8, 12),
-                    ('深度学习计算节点', 2, 13, 17),
-                    ('激光共聚焦显微镜', 3, 9, 11),
-                    ('数据分析工作站', 1, 9, 12),
-                    ('数据分析工作站', 2, 14, 17)
-            ),
-            candidate_slots AS (
-                SELECT r.id AS resource_id,
-                       date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
-                           + make_interval(days => t.day_offset, hours => t.start_hour) AS start_time,
-                       date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
-                           + make_interval(days => t.day_offset, hours => t.end_hour) AS end_time
-                FROM slot_templates t
-                JOIN resource r ON r.name = t.resource_name
-                WHERE r.status = 'ACTIVE'
-            )
             INSERT INTO available_slot
                 (start_time, end_time, resource_id, is_reserved,
                  created_by, created_date, version)
-            SELECT c.start_time, c.end_time, c.resource_id, false,
-                   'system', CURRENT_TIMESTAMP, 0
-            FROM candidate_slots c
+            SELECT DATE_ADD(
+                       DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                                INTERVAL t.day_offset DAY),
+                       INTERVAL t.start_hour HOUR),
+                   DATE_ADD(
+                       DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                                INTERVAL t.day_offset DAY),
+                       INTERVAL t.end_hour HOUR),
+                   r.id, FALSE, 'system', UTC_TIMESTAMP(6), 0
+            FROM (
+                SELECT '化学分析实验室' AS resource_name, 1 AS day_offset, 9 AS start_hour, 11 AS end_hour
+                UNION ALL SELECT '化学分析实验室', 2, 14, 16
+                UNION ALL SELECT '分子生物学实验室', 1, 14, 16
+                UNION ALL SELECT '分子生物学实验室', 3, 9, 11
+                UNION ALL SELECT '人工智能研讨室', 1, 10, 12
+                UNION ALL SELECT '人工智能研讨室', 2, 15, 17
+                UNION ALL SELECT '学术报告会议室', 2, 9, 12
+                UNION ALL SELECT '深度学习计算节点', 1, 8, 12
+                UNION ALL SELECT '深度学习计算节点', 2, 13, 17
+                UNION ALL SELECT '激光共聚焦显微镜', 3, 9, 11
+                UNION ALL SELECT '数据分析工作站', 1, 9, 12
+                UNION ALL SELECT '数据分析工作站', 2, 14, 17
+            ) t
+            JOIN resource r ON r.name = t.resource_name AND r.status = 'ACTIVE'
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM available_slot s
-                WHERE s.resource_id = c.resource_id
-                  AND s.start_time = c.start_time
-                  AND s.end_time = c.end_time
+                WHERE s.resource_id = r.id
+                  AND s.start_time = DATE_ADD(
+                      DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                               INTERVAL t.day_offset DAY),
+                      INTERVAL t.start_hour HOUR)
+                  AND s.end_time = DATE_ADD(
+                      DATE_ADD(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')),
+                               INTERVAL t.day_offset DAY),
+                      INTERVAL t.end_hour HOUR)
             );
         ]]></sql>
     </changeSet>
@@ -102,21 +103,21 @@
     <changeSet id="8-remove-resource-version-labels" author="Hu" context="dev">
         <sql><![CDATA[
             UPDATE resource
-            SET name = btrim(regexp_replace(name, '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi')),
+            SET name = TRIM(REGEXP_REPLACE(name, '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '$1$2', 1, 0, 'i')),
                 description = CASE
                     WHEN description IS NULL THEN NULL
-                    ELSE btrim(regexp_replace(description,
-                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi'))
+                    ELSE TRIM(REGEXP_REPLACE(description,
+                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '$1$2', 1, 0, 'i'))
                 END,
                 location = CASE
                     WHEN location IS NULL THEN NULL
-                    ELSE btrim(regexp_replace(location,
-                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '\1\2', 'gi'))
+                    ELSE TRIM(REGEXP_REPLACE(location,
+                        '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)', '$1$2', 1, 0, 'i'))
                 END,
                 last_modified_by = 'system',
-                last_modified_date = CURRENT_TIMESTAMP
-            WHERE lower(concat_ws(' ', name, description, location))
-                      ~ '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)';
+                last_modified_date = UTC_TIMESTAMP(6)
+            WHERE LOWER(CONCAT_WS(' ', name, description, location))
+                      REGEXP '(^|[^[:alnum:]])v[12]([^[:alnum:]]|$)';
         ]]></sql>
     </changeSet>
 </databaseChangeLog>

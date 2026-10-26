@@ -10,5 +10,6 @@ public record AdminResourceRequest(
         @NotNull ResourceType type,
         @NotBlank String location,
         @NotNull ResourceStatus status,
-        @Positive int capacity,
+        @Min(value = 1, message = "当前版本资源容量必须为 1")
+        @Max(value = 1, message = "当前版本资源容量必须为 1") int capacity,
         @Size(max = 1000) String description) { }

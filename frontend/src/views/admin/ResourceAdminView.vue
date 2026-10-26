@@ -74,7 +74,7 @@ function openEdit(row) {
     type: row.type || 'LAB',
     location: row.location || '',
     status: row.status || 'ACTIVE',
-    capacity: row.capacity ?? 1,
+    capacity: 1,
     description: row.description || '',
   }
   dialogVisible.value = true
@@ -159,7 +159,9 @@ onMounted(loadResources)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="capacity" label="容量" width="80" />
+        <el-table-column label="预约模式" width="130">
+          <template #default>单时段单预约</template>
+        </el-table-column>
         <el-table-column label="描述" min-width="200">
           <template #default="scope"><span class="resource-description">{{ scope.row.description || '—' }}</span></template>
         </el-table-column>
@@ -201,8 +203,8 @@ onMounted(loadResources)
             <el-option v-for="status in RESOURCE_STATUSES" :key="status" :label="RESOURCE_STATUS_LABELS[status]" :value="status" />
           </el-select>
         </el-form-item>
-        <el-form-item label="容量" required>
-          <el-input-number v-model="form.capacity" :min="1" :max="9999" />
+        <el-form-item label="预约模式">
+          <el-tag type="info">单时段单预约</el-tag>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="3" maxlength="1000" show-word-limit />

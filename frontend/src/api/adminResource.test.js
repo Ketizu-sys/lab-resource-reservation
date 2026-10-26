@@ -41,7 +41,7 @@ describe('管理端资源 API', () => {
       type: 'LAB',
       location: 'A-101',
       status: 'ACTIVE',
-      capacity: 4,
+      capacity: 1,
       description: '联调用',
     }
     await createAdminResource(payload)

@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 验证 Redis 异步预约的数据库侧幂等保证。
  *
  * <p>队列采用 at-least-once 投递，消息可能被重放。reservation.request_id 上的
- * 唯一约束让 PostgreSQL 成为最终事实源，从而把投递语义收敛为
+ * 唯一约束让 MySQL 成为最终事实源，从而把投递语义收敛为
  * effectively-once 的业务效果。</p>
  */
 @SpringBootTest
@@ -117,7 +117,7 @@ class AsyncReservationIdempotencyIntegrationTest extends ContainerIntegrationTes
 
     /**
      * 核心恢复场景：数据库已经落库，但 Redis 中的 SUCCESS 状态丢失。
-     * 此时必须以 PostgreSQL 为准恢复成功状态，且不能产生第二条预约。
+     * 此时必须以 MySQL 为准恢复成功状态，且不能产生第二条预约。
      */
     @Test
     void shouldRestoreSuccessFromDatabaseWhenRedisStatusIsLost() {
@@ -163,7 +163,9 @@ class AsyncReservationIdempotencyIntegrationTest extends ContainerIntegrationTes
         insertCancelledReservation(user.getId(), slot.getId(), requestId);
 
         assertEquals(1, jdbc.queryForObject(
-                "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'uk_reservation_request_id'", Integer.class));
+                "SELECT COUNT(*) FROM information_schema.statistics " +
+                        "WHERE table_schema = DATABASE() AND table_name = 'reservation' " +
+                        "AND index_name = 'uk_reservation_request_id'", Integer.class));
 
         assertThrows(DataIntegrityViolationException.class,
                 () -> insertCancelledReservation(user.getId(), slot.getId(), requestId));

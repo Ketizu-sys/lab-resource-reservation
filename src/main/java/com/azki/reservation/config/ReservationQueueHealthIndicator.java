@@ -44,6 +44,10 @@ public class ReservationQueueHealthIndicator implements HealthIndicator {
         Health.Builder builder = Health.up()
             .withDetail("queueSize", queueSize)
             .withDetail("deadLetterQueueSize", dlqSize);
+        String backend = reservationQueueService.getBackendName();
+        if (backend != null) {
+            builder.withDetail("backend", backend);
+        }
 
         // 主队列严重积压优先判定为 DOWN，其次是 WARNING。
         if (queueSize > queueCriticalThreshold) {

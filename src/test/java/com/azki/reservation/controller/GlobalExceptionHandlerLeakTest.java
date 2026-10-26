@@ -72,7 +72,7 @@ class GlobalExceptionHandlerLeakTest {
         String lower = body.toLowerCase();
         List<String> forbidden = List.of(
                 "sql", "constraint", "fk_reservation_slot", "hibernate", "jdbc",
-                "org.postgresql", "psqlexception", "secret-db-detail", "stacktrace", "available_slot");
+                "com.mysql", "mysqlexception", "secret-db-detail", "stacktrace", "available_slot");
         forbidden.forEach(token -> assertFalse(lower.contains(token),
                 "响应体不应包含内部实现信息 '" + token + "'，实际响应：" + body));
     }

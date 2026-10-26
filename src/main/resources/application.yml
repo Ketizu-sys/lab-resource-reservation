@@ -2,19 +2,38 @@ spring:
   # 应用名称会出现在日志、指标和 Spring 管理信息中。
   application:
     name: reservation
-  # PostgreSQL 主数据源：保存用户、可用时段和最终预约记录。
+  # MySQL 主数据源：保存用户、可用时段和最终预约记录。
   datasource:
-    url: jdbc:postgresql://localhost:5432/reservationdb
-    username: ${DB_USERNAME:postgres}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/reservationdb?useUnicode=true&characterEncoding=UTF-8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:azki}
     password: ${DB_PASSWORD}
     hikari:
-      # 每条应用数据库连接都以业务时区呈现 timestamptz 字段。
-      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
+      # InnoDB 默认 REPEATABLE READ 的范围锁可能扩大竞争面；预约行锁使用 READ COMMITTED。
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      # 审计与生命周期 Instant 统一按 UTC 持久化；业务时段由 LocalDateTime 保存上海墙上时间。
+      connection-init-sql: SET time_zone = '+00:00'
   # Redis 同时承载缓存、请求队列、请求状态和用户排队去重集合。
   data:
     redis:
       host: localhost
       port: 6379
+  # Kafka 仅在 reservation.queue.backend=kafka 时承载预约消息；Redis 仍保存状态与 Outbox。
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
   # 默认启用开发环境配置；生产部署建议通过环境变量覆盖。
   profiles:
     active: dev
@@ -28,6 +47,11 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        # 不设置全局 hibernate.jdbc.time_zone：它会错误转换表示上海墙上时间的 LocalDateTime。
+        # Instant 仍由 UTC JDBC 连接和 UTC 数据库会话按绝对时刻持久化。
+        type:
+          # JDBC 4.2 直接传递 LocalDateTime，避免先包装成带 JVM 时区含义的 Timestamp。
+          java_time_use_direct_jdbc: true
 
   # 数据库版本迁移配置。
   liquibase:
@@ -39,10 +63,26 @@ spring:
 reservation:
   # Slot 使用上海本地业务时间；生命周期字段以绝对时刻保存后按此时区展示。
   time-zone: Asia/Shanghai
-  # 高负载模式下的 Redis 队列批处理参数。
+  # 默认保留 Redis List；设置 RESERVATION_QUEUE_BACKEND=kafka 后启用 Kafka 传输。
   queue:
+    backend: ${RESERVATION_QUEUE_BACKEND:redis}
     batch-size: 50
     poll-interval-ms: 10
+    kafka:
+      topic: ${RESERVATION_KAFKA_TOPIC:reservation.requests.v1}
+      consumer-group: ${RESERVATION_KAFKA_CONSUMER_GROUP:reservation-workers-v1}
+      partitions: ${RESERVATION_KAFKA_PARTITIONS:3}
+      replication-factor: ${RESERVATION_KAFKA_REPLICATION_FACTOR:1}
+      consumer-concurrency: ${RESERVATION_KAFKA_CONCURRENCY:3}
+      retry-attempts: 3
+      retry-initial-delay-ms: 10000
+      retry-multiplier: 6
+      retry-max-delay-ms: 60000
+      publisher-interval-ms: 100
+      publisher-batch-size: 50
+      publish-timeout-ms: 5000
+      publish-retry-delay-ms: 1000
+      publish-claim-timeout-ms: 30000
   # 预约与登录接口按客户端 IP 分桶限流。
   rate-limiting:
     enabled: true

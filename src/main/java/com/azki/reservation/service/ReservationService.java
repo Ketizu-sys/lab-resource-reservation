@@ -148,7 +148,7 @@ public class ReservationService {
     /**
      * 数据库是否已经存在该 requestId 对应的预约。
      *
-     * <p>PostgreSQL 是最终事实源；Redis 中的 SUCCESS 状态丢失时，
+     * <p>MySQL 是最终事实源；Redis 中的 SUCCESS 状态丢失时，
      * 队列消费者用该方法判断业务是否已经完成，并据此恢复状态。</p>
      */
     @Transactional(readOnly = true)
@@ -278,6 +278,15 @@ public class ReservationService {
                 return true;
             }
             if (cause.getMessage() != null && cause.getMessage().contains(REQUEST_ID_CONSTRAINT)) {
+                return true;
+            }
+            // Connector/J 对唯一键冲突使用 vendor code 1062 / SQLState 23000；
+            // 某些 Hibernate 版本不会单独暴露约束名，因此同时核对错误码和键名。
+            if (cause instanceof java.sql.SQLException sqlException
+                    && sqlException.getErrorCode() == 1062
+                    && "23000".equals(sqlException.getSQLState())
+                    && sqlException.getMessage() != null
+                    && sqlException.getMessage().contains(REQUEST_ID_CONSTRAINT)) {
                 return true;
             }
         }

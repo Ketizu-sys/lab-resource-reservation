@@ -7,7 +7,7 @@
 
     <!--
         Redis 异步队列采用 at-least-once 语义：消息可能被重复投递。
-        这里为 reservation 增加 request_id 幂等键，让 PostgreSQL 成为最终事实源：
+        这里为 reservation 增加 request_id 幂等键，让 MySQL 成为最终事实源：
         即使 Redis 中的 SUCCESS 状态丢失导致消息重放，数据库唯一约束也只会允许一条预约。
     -->
     <changeSet id="9-reservation-request-id" author="Hu">
@@ -16,7 +16,7 @@
         </addColumn>
 
         <!--
-            PostgreSQL 的唯一约束允许多个 NULL 共存，
+            MySQL 的唯一约束允许多个 NULL 共存，
             因此手工预约和同步直接预约（request_id 为空）不受影响。
             该约束正是防止消息重放造成重复预约的最终一致性保障。
         -->

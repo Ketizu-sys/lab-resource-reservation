@@ -11,6 +11,7 @@ import com.azki.reservation.entity.ResourceType;
 import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
@@ -32,13 +33,20 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
         FROM available_slot s
         JOIN resource r ON r.id = s.resource_id
         WHERE s.is_reserved = false
-          AND s.start_time >= :now
+          AND s.start_time >= CAST(:now AS DATETIME(6))
           AND r.status = 'ACTIVE'
         ORDER BY s.start_time ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
         """, nativeQuery = true)
-    Optional<AvailableSlot> findNextAvailableForUpdate(@Param("now") LocalDateTime now);
+    Optional<AvailableSlot> findNextAvailableForUpdateValue(@Param("now") String now);
+
+    /**
+     * 原生 SQL 使用文本形式的 MySQL DATETIME 参数，保留上海业务墙上时间原值。
+     */
+    default Optional<AvailableSlot> findNextAvailableForUpdate(LocalDateTime now) {
+        return findNextAvailableForUpdateValue(formatMysqlDateTime(now));
+    }
 
     /** 按资源、资源类型和时间窗口分页查询普通用户可见的空闲时段。 */
     @Query("""
@@ -83,4 +91,8 @@ public interface TimeSlotRepository extends JpaRepository<AvailableSlot, Long> {
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "resource")
     Page<AvailableSlot> findAllByOrderByStartTimeAsc(Pageable pageable);
+
+    private static String formatMysqlDateTime(LocalDateTime value) {
+        return value.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"));
+    }
 }

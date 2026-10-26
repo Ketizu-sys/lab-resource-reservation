@@ -9,8 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.security.Key;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.Instant;
 import java.util.Date;
 
 @Component
@@ -69,15 +68,13 @@ public class JwtUtil {
     }
 
     /**
-     * 读取令牌过期时间并转换成服务器默认时区的 LocalDateTime。
+     * 读取令牌中的绝对过期时刻，不依赖服务器默认时区。
      * @param token JWT 字符串
-     * @return 本地时区的过期时间
+     * @return UTC 时间线上的过期时刻
      */
-    public LocalDateTime getExpirationDate(String token) {
+    public Instant getExpirationDate(String token) {
         Date expiration = extractAllClaims(token).getExpiration();
-        return expiration.toInstant()
-                .atZone(ZoneId.systemDefault())
-                .toLocalDateTime();
+        return expiration.toInstant();
     }
 
     /** 解析并返回令牌中的全部声明；签名或格式错误时由 JJWT 抛异常。 */
